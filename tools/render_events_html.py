@@ -789,10 +789,17 @@ def _render_html(
     parts.append('      if(!anyChecked||checked[vid]) el.classList.remove("venue-hidden");')
     parts.append('      else el.classList.add("venue-hidden");')
     parts.append('    });')
+    parts.append('    // "Alle" button is the visual default — highlight it when no')
+    parts.append('    // venue chips are checked, dim it when user has picked specific venues.')
+    parts.append('    document.querySelectorAll(".venue-chip-all").forEach(function(b){')
+    parts.append('      b.classList.toggle("active",!anyChecked);')
+    parts.append('    });')
     parts.append('  }')
     parts.append('  document.querySelectorAll(\'input.filter-input[id^="v-"]\').forEach(function(c){')
     parts.append('    c.addEventListener("change",applyVenueFilter);')
     parts.append('  });')
+    parts.append('  // Initialize "Alle" highlight on page load (default = active).')
+    parts.append('  applyVenueFilter();')
     parts.append('  // "Alle" button = clear venue selection (uncheck all chips, show everything).')
     parts.append('  document.querySelectorAll(".venue-chip-all").forEach(function(b){')
     parts.append('    b.addEventListener("click",function(){')
@@ -1548,8 +1555,11 @@ _PAGE_HEAD = """<!DOCTYPE html>
     #f-ballet:checked  ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-ballet)  {{ display: none; }}
     #f-theatre:checked ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-theatre) {{ display: none; }}
     #f-exh:checked     ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-exh)     {{ display: none; }}
-    /* "Alle" reset button — same chip shape, slightly emphasized on hover */
-    .venue-chip-all:hover {{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}
+    /* "Alle" reset button — same chip shape, slightly emphasized on hover.
+       `.active` is toggled by JS when no venue chips are checked, so it visually
+       reads as the current selection. */
+    .venue-chip-all:hover,
+    .venue-chip-all.active {{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}
     .venue-checkbox {{
       width: 10px;
       height: 10px;
