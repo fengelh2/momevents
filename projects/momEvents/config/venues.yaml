@@ -650,6 +650,51 @@
 # MÜNSTER
 # ============================================================================
 
+- id: theater-muenster
+  name: Theater Münster
+  city: Münster
+  category: mixed
+  homepage: https://www.theater-muenster.com
+  calendar_url: https://www.theater-muenster.com/spielplan/kalender
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: ".tm-performance"
+    title: ".tm-performance__productionName a"
+    detail_link: ".tm-performance__productionName a"
+    date_day: ".tm-performance__dayNumber"
+    date_time: ".tm-performance__performanceTime"
+  month_context_selector: ".tm-playingScheduleModule__currentMonth"
+  paginate_months: 4
+  paginate_url_param: date
+  date_day_carry_forward: true
+  notes: |
+    Opera + ballet + drama under one roof. Multi-month pagination via
+    ?date=YYYY-MM (paginate_months=4 fetches current + 3 future). Per-item
+    day-number; same-day continuation rows have empty .tm-performance__dayNumber
+    so date_day_carry_forward repeats the previous day. Page-level month
+    name in .tm-playingScheduleModule__currentMonth.
+
+- id: wolfgang-borchert-theater
+  name: Wolfgang-Borchert-Theater
+  city: Münster
+  category: theatre
+  homepage: https://www.wolfgang-borchert-theater.de
+  calendar_url: https://www.wolfgang-borchert-theater.de/kalender/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.event_dates"
+    title: "div.event_title a"
+    detail_link: "div.event_title a"
+    date_day: "div.event_day"
+    date_time: "div.event_time"
+  month_context_selector: "div.calendar_month h2"
+  notes: |
+    Boulevard theatre — popular with the over-60 crowd. Page shows ONE month
+    only (no pagination — the month switcher is JS-driven so we can't reach
+    other months without Playwright). Year inferred from current.
+
 - id: lwl-museum-kunst-kultur
   name: LWL-Museum für Kunst und Kultur
   city: Münster
@@ -745,6 +790,34 @@
     by render's future-horizon. data-date attribute is ISO YYYY-MM-DD on the
     item element itself; uses our @attr-on-item selector syntax.
     NOTE: domain is kunsthallemuenster.de (no hyphen).
+
+# ============================================================================
+# UNNA
+# ============================================================================
+
+- id: lindenbrauerei
+  name: Lindenbrauerei Unna
+  city: Unna
+  category: mixed
+  homepage: https://lindenbrauerei.de
+  calendar_url: https://lindenbrauerei.de/events/
+  kind: detail_pages
+  source_priority: 0
+  detail_url_pattern: '/events/[a-z0-9][a-z0-9-]*/'
+  selectors:
+    title: "title"
+    date: ".fa-calendar-alt + .jet-listing-dynamic-field__content"
+  title_strip_suffixes:
+    - " – Lindenbrauerei"
+    - " - Lindenbrauerei"
+  date_extract_regex: '\d{1,2}\.\s+\w+\s+[’'']?\d{2,4}'
+  notes: |
+    Cultural center in former brewery — concerts, theatre, exhibitions.
+    Listing page is Elementor + JetEngine WordPress; cards have no clean
+    item wrapper. detail_pages kind: discover URLs from listing, fetch each
+    detail page, extract title from <title> element + date from the
+    .jet-listing-dynamic-field__content next to the calendar icon.
+    Date format: "Fr., 22. Mai '26" — apostrophe-year.
 
 # ============================================================================
 # DUISBURG

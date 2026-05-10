@@ -79,6 +79,8 @@ def scrape(venue_row: dict, session: Optional[requests.Session] = None) -> list[
             events = _scrape_ical(venue_row, session=session)
         elif kind == "html_list":
             events = _scrape_html_list(venue_row, session=session)
+        elif kind == "detail_pages":
+            events = _scrape_detail_pages(venue_row, session=session)
         elif kind == "static":
             events = _scrape_static(venue_row)
         elif kind == "unknown":
@@ -92,6 +94,88 @@ def scrape(venue_row: dict, session: Optional[requests.Session] = None) -> list[
         return []
     log.info("scrape %s (%s): %d events", venue_id, kind, len(events))
     return events
+
+
+# ─── detail-pages path ──────────────────────────────────────────────────────
+# For venues whose listing page has only URLs (no item-level data), and all
+# title/date info lives on per-event detail pages. Lindenbrauerei Unna fits.
+
+def _scrape_detail_pages(venue_row: dict, session=None) -> list[Event]:
+    """Discover detail URLs from the listing, then fetch each detail page
+    and extract title + date from selectors there.
+
+    Config:
+      detail_url_pattern: regex to find detail URLs on listing
+      selectors: {title, date} for the detail page
+      title_strip_suffixes: optional cleanup
+      date_extract_regex: optional, applied to extracted date text
+    """
+    sess = session or requests
+    listing_url = venue_row["calendar_url"]
+    pattern = venue_row.get("detail_url_pattern")
+    if not pattern:
+        log.warning("%s: detail_pages kind missing detail_url_pattern", venue_row["id"])
+        return []
+    sel = venue_row.get("selectors") or {}
+
+    try:
+        resp = sess.get(listing_url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        log.warning("%s: listing fetch failed: %s", venue_row["id"], exc)
+        return []
+
+    matches = re.findall(pattern, resp.text)
+    detail_urls = sorted({urljoin(listing_url, m) for m in matches})
+    log.debug("%s: found %d detail URLs", venue_row["id"], len(detail_urls))
+
+    out: list[Event] = []
+    for url in detail_urls:
+        try:
+            r = sess.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            r.raise_for_status()
+        except requests.RequestException as exc:
+            log.debug("  %s: detail fetch failed: %s", url, exc)
+            continue
+        page = BeautifulSoup(r.content, "html.parser")
+        title = _select_text(page, sel.get("title", "title"))
+        title = _clean_title(title)
+        for suffix in venue_row.get("title_strip_suffixes") or []:
+            title = re.sub(re.escape(suffix), "", title, flags=re.IGNORECASE).strip()
+        date_text = _select_text(page, sel.get("date"))
+        extract_re = venue_row.get("date_extract_regex")
+        if extract_re and date_text:
+            m = re.search(extract_re, date_text)
+            if m:
+                date_text = m.group(0)
+        if not title or not date_text:
+            continue
+        for pat in venue_row.get("skip_if_title_matches") or []:
+            if re.search(pat, title):
+                title = ""
+                break
+        if not title:
+            continue
+        start = _parse_one(date_text, venue_row.get("date_format"))
+        if start is None:
+            log.debug("  %s: failed to parse date %r", url, date_text)
+            continue
+        out.append(
+            Event(
+                title=title,
+                start=start,
+                end=None,
+                venue_id=venue_row["id"],
+                venue_name=venue_row.get("display_name") or venue_row["name"],
+                city=venue_row.get("city", ""),
+                category=venue_row.get("category", "other"),
+                url=url,
+                description=None,
+                source=venue_row["id"],
+                audience=_infer_audience(title),
+            )
+        )
+    return out
 
 
 # ─── static path ─────────────────────────────────────────────────────────────
@@ -318,48 +402,111 @@ def _resolve_stage(location: str, title: str, venue_row: dict) -> tuple[str, str
 
 
 def _scrape_html_list(venue_row: dict, session=None) -> list[Event]:
+    """Fetch the listing page(s) and assemble events from each item.
+
+    Supports multi-month pagination (`paginate_months: N` + `paginate_url_param`)
+    for venues that show one month at a time and need explicit URL stepping.
+    Each fetched page may carry its own month context (for venues like Theater
+    Münster where the date day-number per item is paired with a page-level
+    month name).
+    """
     sess = session or requests
     sel = venue_row.get("selectors") or {}
     listing_url = venue_row["calendar_url"]
-
-    resp = sess.get(listing_url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
-    resp.raise_for_status()
-    # Pass bytes (not resp.text) so BS4 detects the charset from the document
-    # itself. Some German municipal sites (essen.de) don't set Content-Type
-    # charset, and `requests` falls back to ISO-8859-1, which mangles UTF-8
-    # umlauts ("jüdischer" → "jÃ¼discher").
-    soup = BeautifulSoup(resp.content, "html.parser")
 
     item_sel = sel.get("item")
     if not item_sel:
         log.warning("%s: html_list missing selectors.item", venue_row["id"])
         return []
 
-    items = soup.select(item_sel)
-    log.debug("%s: matched %d items via %r", venue_row["id"], len(items), item_sel)
+    # Build the list of URLs to fetch. Defaults to single calendar_url; if
+    # paginate_months is set, append `?date=YYYY-MM` for the current month
+    # plus N-1 future months.
+    urls = _paginated_urls(venue_row)
 
     out: list[Event] = []
-    for it in items:
-        ev = _assemble_from_html_item(it, listing_url, venue_row)
-        if ev is not None:
-            out.append(ev)
+    for url, ctx_year in urls:
+        try:
+            resp = sess.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            log.warning("  %s: page fetch failed (%s): %s", venue_row["id"], url, exc)
+            continue
+        # Pass bytes (not resp.text) so BS4 detects the charset from the document
+        soup = BeautifulSoup(resp.content, "html.parser")
+
+        # Page-level month context (Theater Münster, Wolfgang-Borchert-Theater).
+        # Combined with per-item day-number to produce a full date.
+        month_ctx = None
+        mc_sel = venue_row.get("month_context_selector")
+        if mc_sel:
+            mc_el = soup.select_one(mc_sel)
+            if mc_el:
+                month_ctx = mc_el.get_text(" ", strip=True)
+
+        items = soup.select(item_sel)
+        log.debug("%s [%s]: matched %d items", venue_row["id"], url[-30:], len(items))
+
+        prev_day = None  # for date_day_carry_forward
+        for it in items:
+            ev, prev_day = _assemble_from_html_item(
+                it, url, venue_row,
+                month_ctx=month_ctx,
+                ctx_year=ctx_year,
+                prev_day=prev_day,
+            )
+            if ev is not None:
+                out.append(ev)
     return out
 
 
-def _assemble_from_html_item(item, listing_url: str, venue_row: dict) -> Optional[Event]:
+def _paginated_urls(venue_row: dict) -> list[tuple[str, Optional[int]]]:
+    """Return [(url, year_for_that_url), ...] — one entry per month for
+    paginated venues, or just [(calendar_url, None)] for non-paginated."""
+    base = venue_row["calendar_url"]
+    months = venue_row.get("paginate_months")
+    if not months:
+        return [(base, None)]
+    param = venue_row.get("paginate_url_param", "date")
+    out: list[tuple[str, Optional[int]]] = []
+    today = datetime.now(timezone.utc).date()
+    y, m = today.year, today.month
+    sep = "&" if "?" in base else "?"
+    for _ in range(int(months)):
+        url = f"{base}{sep}{param}={y:04d}-{m:02d}"
+        out.append((url, y))
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return out
+
+
+def _assemble_from_html_item(
+    item, listing_url: str, venue_row: dict,
+    month_ctx: Optional[str] = None,
+    ctx_year: Optional[int] = None,
+    prev_day: Optional[str] = None,
+) -> tuple[Optional[Event], Optional[str]]:
+    """Build a single Event from one selector match.
+
+    Returns (event_or_None, day_carry_forward_value) — the second value is
+    used by the caller to remember the last seen day-number for venues where
+    continuation rows have an empty day cell (Theater Münster).
+    """
     sel = venue_row["selectors"]
+    new_prev_day = prev_day  # default: pass through unchanged
 
     # When the date is embedded in the title block, preserve line breaks so we can
     # split off venue/location lines after extracting the date.
     title_separator = "\n" if venue_row.get("date_from_title") else " "
     raw_title = _select_text(item, sel.get("title"), separator=title_separator)
     if not raw_title:
-        return None
+        return None, new_prev_day
 
     # Optional skip filter — drop non-event entries like "Museum closed" cards
     for pat in venue_row.get("skip_if_title_matches") or []:
         if re.search(pat, raw_title):
-            return None
+            return None, new_prev_day
 
     # Optional title cleanup: strip suffixes (literal) and regex patterns
     title = _clean_title(raw_title)
@@ -368,13 +515,27 @@ def _assemble_from_html_item(item, listing_url: str, venue_row: dict) -> Optiona
     for pattern in venue_row.get("title_strip_regex") or []:
         title = re.sub(pattern, "", title).strip(" -–—,.\n\t")
 
-    # Resolve dates. Three modes:
-    #   1. date_start + date_end selectors          (Folkwang-style)
-    #   2. date selector                            (Red Dot-style, single field with range)
-    #   3. date_from_title regex                    (Ruhr Museum-style, embedded in title)
+    # Resolve dates. Modes (first matching wins):
+    #   0. month_context: page-level month + per-item day (Theater Münster, WBT)
+    #   1. date_start + date_end selectors (Folkwang-style)
+    #   2. date selector (Red Dot / Ruhr Museum extracts)
+    #   3. date_from_title regex (Ruhr Museum exhibitions)
     start = end = None
     date_text = ""
-    if sel.get("date_start") or sel.get("date_end"):
+    if month_ctx and sel.get("date_day"):
+        # Construct date from day-number + page-level month + inferred year
+        day_t = _select_text(item, sel.get("date_day")).strip(" .,")
+        if not day_t and venue_row.get("date_day_carry_forward"):
+            day_t = prev_day or ""
+        if day_t:
+            new_prev_day = day_t
+            time_t = _select_text(item, sel.get("date_time")) if sel.get("date_time") else ""
+            yr = ctx_year or datetime.now(timezone.utc).year
+            date_text = f"{day_t}. {month_ctx} {yr} {time_t}".strip()
+            start = _parse_one(date_text, venue_row.get("date_format"))
+    if start is not None:
+        pass  # month_context mode already produced a start
+    elif sel.get("date_start") or sel.get("date_end"):
         start_t = _select_text(item, sel.get("date_start"))
         end_t = _select_text(item, sel.get("date_end"))
         if start_t:
@@ -445,7 +606,7 @@ def _assemble_from_html_item(item, listing_url: str, venue_row: dict) -> Optiona
 
     if start is None:
         log.debug("%s: failed to parse date %r (raw_title=%r)", venue_row["id"], date_text, raw_title)
-        return None
+        return None, new_prev_day
 
     # Title cleanup pass 2: take first non-empty line, in case selector pulled a multiline blob
     if "\n" in title or "  " in title:
@@ -477,7 +638,7 @@ def _assemble_from_html_item(item, listing_url: str, venue_row: dict) -> Optiona
         price=None,
         source=venue_row["id"],
         audience=_infer_audience(title),
-    )
+    ), new_prev_day
 
 
 def _select_text(node, selector: Optional[str], separator: str = " ") -> str:

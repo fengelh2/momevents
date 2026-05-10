@@ -533,11 +533,11 @@ def _render_html(
     venue_css_rules = []
     for cid in sorted(chips_meta):
         venue_css_rules.append(
-            f'#v-{cid}:checked ~ .venue-chips .venue-chip[for="v-{cid}"] '
+            f'#v-{cid}:checked ~ .filter-panel .venue-chips .venue-chip[for="v-{cid}"] '
             f'{{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}'
         )
         venue_css_rules.append(
-            f'#v-{cid}:checked ~ .venue-chips .venue-chip[for="v-{cid}"] .venue-checkbox '
+            f'#v-{cid}:checked ~ .filter-panel .venue-chips .venue-chip[for="v-{cid}"] .venue-checkbox '
             f'{{ background: var(--bg); border: 1px solid var(--bg); }}'
         )
     venue_css = "\n    ".join(venue_css_rules)
@@ -556,11 +556,11 @@ def _render_html(
             f'{{ display: none; }}'
         )
         when_css_rules.append(
-            f'#w-{slot}:checked ~ .filter-bar .filter-chip[for="w-{slot}"] '
+            f'#w-{slot}:checked ~ .filter-panel .filter-bar .filter-chip[for="w-{slot}"] '
             f'{{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}'
         )
     when_css_rules.append(
-        '#w-all:checked ~ .filter-bar .filter-chip[for="w-all"] '
+        '#w-all:checked ~ .filter-panel .filter-bar .filter-chip[for="w-all"] '
         '{ background: var(--ink); color: var(--bg); border-color: var(--ink); }'
     )
     when_css = "\n    ".join(when_css_rules)
@@ -591,10 +591,10 @@ def _render_html(
             f'{{ display: block !important; }}'
         )
         city_css_rules.append(
-            f'#c-{cslug}:checked ~ .venue-chips.city-{cslug} {{ display: flex; }}'
+            f'#c-{cslug}:checked ~ .filter-panel .venue-chips.city-{cslug} {{ display: flex; }}'
         )
         city_css_rules.append(
-            f'#c-{cslug}:checked ~ .filter-bar .filter-chip[for="c-{cslug}"] '
+            f'#c-{cslug}:checked ~ .filter-panel .filter-bar .filter-chip[for="c-{cslug}"] '
             f'{{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}'
         )
         # Combined city × category empty-day/week hiders, audience-aware.
@@ -1185,13 +1185,13 @@ _PAGE_HEAD = """<!DOCTYPE html>
     .cat-icon {{ font-size: 11px; }}
     /* Active state — highlight the chip whose radio is checked.
        (Per-city chip-active rules emitted dynamically in the city_css block.) */
-    #f-all:checked      ~ .filter-bar .filter-chip[for="f-all"],
-    #f-opera:checked    ~ .filter-bar .filter-chip[for="f-opera"],
-    #f-concert:checked  ~ .filter-bar .filter-chip[for="f-concert"],
-    #f-ballet:checked   ~ .filter-bar .filter-chip[for="f-ballet"],
-    #f-theatre:checked  ~ .filter-bar .filter-chip[for="f-theatre"],
-    #f-exh:checked      ~ .filter-bar .filter-chip[for="f-exh"],
-    #c-all:checked      ~ .filter-bar .filter-chip[for="c-all"] {{
+    #f-all:checked      ~ .filter-panel .filter-bar .filter-chip[for="f-all"],
+    #f-opera:checked    ~ .filter-panel .filter-bar .filter-chip[for="f-opera"],
+    #f-concert:checked  ~ .filter-panel .filter-bar .filter-chip[for="f-concert"],
+    #f-ballet:checked   ~ .filter-panel .filter-bar .filter-chip[for="f-ballet"],
+    #f-theatre:checked  ~ .filter-panel .filter-bar .filter-chip[for="f-theatre"],
+    #f-exh:checked      ~ .filter-panel .filter-bar .filter-chip[for="f-exh"],
+    #c-all:checked      ~ .filter-panel .filter-bar .filter-chip[for="c-all"] {{
       background: var(--ink);
       color: var(--bg);
       border-color: var(--ink);
@@ -1487,7 +1487,7 @@ _PAGE_HEAD = """<!DOCTYPE html>
     }}
     /* Favoriten filter chip — slightly emphasized */
     .filter-chip-fav .cat-icon {{ color: #d63a3a; }}
-    #f-fav:checked ~ .filter-bar .filter-chip[for="f-fav"] {{
+    #f-fav:checked ~ .filter-panel .filter-bar .filter-chip[for="f-fav"] {{
       background: #d63a3a !important;
       color: white !important;
       border-color: #d63a3a !important;
@@ -1543,11 +1543,11 @@ _PAGE_HEAD = """<!DOCTYPE html>
     /* `display: flex` show rule for each venue-chips block emitted dynamically below */
     /* When a category filter is active, hide chips for venues that don't have
        events in that category — keeps the Häuser row focused on relevant houses. */
-    #f-opera:checked   ~ .venue-chips .venue-chip:not(.has-cat-opera)   {{ display: none; }}
-    #f-concert:checked ~ .venue-chips .venue-chip:not(.has-cat-concert) {{ display: none; }}
-    #f-ballet:checked  ~ .venue-chips .venue-chip:not(.has-cat-ballet)  {{ display: none; }}
-    #f-theatre:checked ~ .venue-chips .venue-chip:not(.has-cat-theatre) {{ display: none; }}
-    #f-exh:checked     ~ .venue-chips .venue-chip:not(.has-cat-exh)     {{ display: none; }}
+    #f-opera:checked   ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-opera)   {{ display: none; }}
+    #f-concert:checked ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-concert) {{ display: none; }}
+    #f-ballet:checked  ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-ballet)  {{ display: none; }}
+    #f-theatre:checked ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-theatre) {{ display: none; }}
+    #f-exh:checked     ~ .filter-panel .venue-chips .venue-chip:not(.has-cat-exh)     {{ display: none; }}
     /* "Alle" reset button — same chip shape, slightly emphasized on hover */
     .venue-chip-all:hover {{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}
     .venue-checkbox {{
@@ -1591,12 +1591,12 @@ _PAGE_HEAD = """<!DOCTYPE html>
       flex-shrink: 0;
       transition: background 100ms ease, border-color 100ms ease;
     }}
-    #show-extras:checked ~ .extras-toggle-wrapper .extras-checkbox,
-    #show-extras:checked ~ .extras-toggle-wrapper .extras-toggle:hover .extras-checkbox {{
+    #show-extras:checked ~ .filter-panel .extras-toggle-wrapper .extras-checkbox,
+    #show-extras:checked ~ .filter-panel .extras-toggle-wrapper .extras-toggle:hover .extras-checkbox {{
       background: var(--ink);
       border-color: var(--ink);
     }}
-    #show-extras:checked ~ .extras-toggle-wrapper .extras-checkbox::after {{
+    #show-extras:checked ~ .filter-panel .extras-toggle-wrapper .extras-checkbox::after {{
       content: "";
       position: absolute;
       left: 4px;
@@ -1607,7 +1607,7 @@ _PAGE_HEAD = """<!DOCTYPE html>
       border-width: 0 2px 2px 0;
       transform: rotate(45deg);
     }}
-    #show-extras:checked ~ .extras-toggle-wrapper .extras-toggle {{
+    #show-extras:checked ~ .filter-panel .extras-toggle-wrapper .extras-toggle {{
       color: var(--ink);
     }}
     /* Mobile tweaks */
