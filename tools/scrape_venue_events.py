@@ -106,7 +106,7 @@ def _scrape_static(venue_row: dict) -> list[Event]:
     """
     out: list[Event] = []
     for item in venue_row.get("static_events") or []:
-        title = item.get("title")
+        title = _clean_title(item.get("title") or "")
         start_raw = item.get("start")
         if not title or not start_raw:
             continue
@@ -126,7 +126,7 @@ def _scrape_static(venue_row: dict) -> list[Event]:
                 city=venue_row.get("city", ""),
                 category=category,
                 url=item.get("detail_url") or venue_row.get("homepage", "#"),
-                description=item.get("description"),
+                description=_clean_title(item.get("description") or "") or None,
                 source=venue_row["id"],
                 audience=item.get("audience", "general"),
             )

@@ -396,14 +396,17 @@ def _group_by_week(events: list, now: datetime) -> list[tuple[str, list]]:
 
 def _week_label(key: tuple[int, int], this_year: int, this_week: int, first_event) -> str:
     iso_year, iso_week = key
-    s = _start(first_event)
-    # Compute Monday of that ISO week
     monday = datetime.fromisocalendar(iso_year, iso_week, 1).date()
     sunday = monday + timedelta(days=6)
     span = f"{monday.day}.–{sunday.day}. {GERMAN_MONTHS[sunday.month - 1]}"
     if iso_year == this_year and iso_week == this_week:
         return f"Diese Woche · {span}"
-    if iso_year == this_year and iso_week == this_week + 1:
+    # Compute next-week's iso (year, week) properly so Dec→Jan / week 52→1
+    # boundary is handled (don't just `this_week + 1`).
+    next_year, next_week, _ = (
+        datetime.fromisocalendar(this_year, this_week, 1) + timedelta(days=7)
+    ).isocalendar()
+    if iso_year == next_year and iso_week == next_week:
         return f"Nächste Woche · {span}"
     return span
 
@@ -618,8 +621,13 @@ def _render_html(
     parts.append(_PAGE_HEAD.format(title=html.escape(title), venue_css=venue_css, city_css=city_css, when_css=when_css))
     parts.append('<div class="page">')
 
-    # Hidden radio inputs — must be siblings of .featured/.agenda for the
-    # `~` CSS selector to reach them. Three groups: category + city + per-venue.
+    # Hidden inputs — must be siblings of .featured/.agenda for the `~` CSS
+    # selectors to reach them. ORDER MATTERS: any chained rule like
+    # `#A:checked ~ #B:checked ~ .agenda` requires #B to come AFTER #A in DOM.
+    # We emit `show-extras` first so override rules `#show-extras:checked ~ #f-X`
+    # and `#show-extras:checked ~ #c-X` actually match. Then f-* before c-*
+    # before w-* so cross-dimension combos chain correctly.
+    parts.append('  <input type="checkbox" id="show-extras" class="filter-input">')
     parts.append('  <input type="radio" name="catfilter" id="f-all" class="filter-input" checked>')
     parts.append('  <input type="radio" name="catfilter" id="f-opera" class="filter-input">')
     parts.append('  <input type="radio" name="catfilter" id="f-concert" class="filter-input">')
@@ -634,8 +642,6 @@ def _render_html(
     parts.append('  <input type="radio" name="whenfilter" id="w-all" class="filter-input" checked>')
     for slot, _label in WHEN_OPTIONS:
         parts.append(f'  <input type="radio" name="whenfilter" id="w-{slot}" class="filter-input">')
-    # Independent checkbox — revealing kids/active events when checked
-    parts.append('  <input type="checkbox" id="show-extras" class="filter-input">')
     # Per-chip checkboxes — default checked. Unticking hides those rows.
     for cid in sorted(chips_meta):
         parts.append(f'  <input type="checkbox" id="v-{cid}" class="filter-input" checked>')
@@ -807,12 +813,20 @@ def _render_html(
     parts.append('      });')
     parts.append('    }')
     parts.append('  });')
-    parts.append('  // After delay, mark all current as seen + update timestamp')
-    parts.append('  setTimeout(function(){')
+    parts.append('  // First visit: persist seen-state SYNCHRONOUSLY so a fast tab-close')
+    parts.append('  // doesn\'t leave us stuck in "first ever visit" mode forever.')
+    parts.append('  if(firstEverVisit){')
     parts.append('    Object.keys(currentIds).forEach(function(id){seen[id]=true;});')
     parts.append('    save(SEEN,Object.keys(seen));')
     parts.append('    localStorage.setItem(TS,String(now));')
-    parts.append('  }, firstEverVisit?0:SEEN_DELAY);')
+    parts.append('  } else {')
+    parts.append('    // Normal: delay merge so user has time to see NEU badges')
+    parts.append('    setTimeout(function(){')
+    parts.append('      Object.keys(currentIds).forEach(function(id){seen[id]=true;});')
+    parts.append('      save(SEEN,Object.keys(seen));')
+    parts.append('      localStorage.setItem(TS,String(now));')
+    parts.append('    }, SEEN_DELAY);')
+    parts.append('  }')
     parts.append('  // Search box — debounced free-text filter. Tags rows with')
     parts.append('  // .search-match when title/venue/city contains the typed text.')
     parts.append('  var box=document.getElementById("search-box");')
