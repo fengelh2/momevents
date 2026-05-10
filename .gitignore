@@ -22,6 +22,7 @@ projects/ipoDatabase/
 projects/krollAccountingGuidlinesDatabase/
 projects/stockPicker/
 projects/_Sample Project/
+projects/events-la/
 
 # ─── Tools that are not used by momEvents ─────────────────────────────────
 tools/dedup_polybets_snapshots.py
