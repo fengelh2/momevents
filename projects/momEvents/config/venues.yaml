@@ -1,0 +1,916 @@
+# momEvents — venue master list
+#
+# Each entry is one source. A house that runs multiple stages (TUP, Wuppertaler Bühnen)
+# is ONE source row but produces multiple venue_id rows downstream via the
+# `produces_venue_ids:` key.
+#
+# Fields:
+#   id                   slug, unique. Used as venue_id when produces_venue_ids: is absent.
+#   name                 display name
+#   city                 one of: Essen, Düsseldorf, Duisburg, Bochum, Dortmund,
+#                        Mülheim a.d. Ruhr, Oberhausen, Gelsenkirchen, Wuppertal,
+#                        Krefeld, Neuss
+#   category             default category if events don't carry one:
+#                        museum_exhibition | opera | ballet | concert | theatre |
+#                        vernissage | mixed
+#   homepage             venue homepage
+#   calendar_url         the page to scrape (Spielplan / Programm / Veranstaltungen / Ausstellungen)
+#   kind                 ical | json_ld | html_list | unknown   (start at unknown — set during onboarding)
+#   source_priority      int, lower is more authoritative for dedup tiebreaks (0 = venue's own site)
+#   produces_venue_ids   optional list — split a multi-stage source into multiple ids
+#   selectors            optional dict — only filled in when kind = html_list
+#   ical_pattern         optional regex — only filled in when kind = ical
+#   requires_js          bool, default false — flip to true only if Playwright is needed
+#   notes                free text
+#
+# Status: scaffolded 2026-05-09. NO selectors filled in yet — onboarding workflow will
+# probe each one and update this file in place.
+
+# ============================================================================
+# ESSEN
+# ============================================================================
+
+- id: tup-essen
+  name: Theater und Philharmonie Essen (Aalto / Grillo / Philharmonie)
+  display_name: TUP Essen
+  city: Essen
+  category: mixed
+  homepage: https://www.theater-essen.de
+  calendar_url: https://www.theater-essen.de/programm/kalender/
+  kind: ical          # confirmed 2026-05-09: 155 per-event .ics URLs on listing
+  source_priority: 0
+  produces_venue_ids:
+    - aalto-essen           # opera + ballet
+    - grillo-essen          # drama
+    - philharmonie-essen    # philharmonic / concerts
+  ical_pattern: '/kalender-eintrag/\d+/ical-\d{4}-\d{2}-\d{2}-\d+\.ics'
+  # Detail-page URLs live at a different path than the .ics endpoints.
+  # Named capture group `id` lets the scraper match each .ics by event ID.
+  detail_pattern: '/programm/kalender/[^"/]+/(?P<id>\d+)/'
+  category_keyword_overrides:
+    # Aalto Ballett productions, sourced from /ballett/ — these override the
+    # stage_default of "opera" and route to the ballet pill. Refresh each season.
+    # ("Carmen" deliberately omitted — both opera AND ballet under that name run
+    #  at Aalto in 2025/26; no way to distinguish from .ics alone.)
+    ballet:
+      - Relations
+      - Ptah VI
+      - Tanzhommage
+  stage_resolver:
+    - match: ["Aalto"]
+      venue_id: aalto-essen
+      venue_name: "Aalto-Theater"
+      city: Essen
+      default_category: opera          # Aalto = opera + ballet; ballet titles override above
+    - match: ["Grillo", "Casa", "Box (Grillo)", "Café Central", "Heldenbar"]
+      venue_id: grillo-essen
+      venue_name: "Grillo-Theater"
+      city: Essen
+      default_category: theatre
+    - match: ["Alfried Krupp", "Philharmonie", "RWE Pavillon", "Kammermusik", "NATIONAL-BANK Pavillon", "Vorplatz Huyssenallee"]
+      venue_id: philharmonie-essen
+      venue_name: "Philharmonie Essen"
+      city: Essen
+      default_category: concert
+  skip_if_location_matches:
+    # Touring engagements outside Essen — production exists but plays elsewhere.
+    - "(?i)^Gastspiel"
+    - "(?i)Recklinghausen"
+    - "(?i)Berlin$"
+    - "(?i)Bochum$"
+  notes: |
+    TYPO3 spiritec calendar module. First confirmed .ics-publishing source —
+    try other NRW theatres on the same module.
+    Tour engagements (LOCATION matching skip_if_location_matches) are dropped
+    so the calendar stays focused on what mum can actually attend in Essen.
+    Stage_resolver expanded 2026-05-10 with NATIONAL-BANK Pavillon and
+    Vorplatz Huyssenallee after fall-through audit found 44/152 unmatched.
+
+- id: museum-folkwang
+  name: Museum Folkwang
+  city: Essen
+  category: museum_exhibition
+  homepage: https://www.museum-folkwang.de
+  calendar_url: https://www.museum-folkwang.de/de/ausstellungen
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "article.node--type-event"
+    title: "h2.node__title a"
+    date_start: ".first-occurrence"
+    date_end: ".last-occurrence"
+    detail_link: "h2.node__title a"
+    description: ".field-subtitle .field__content"
+  notes: |
+    Drupal "node" CMS. Date is split into .first-occurrence / .last-occurrence
+    div pair. Confirmed 2026-05-09 with 7 cards visible.
+    /veranstaltungen has talks/film/concerts; not yet onboarded.
+
+- id: ruhr-museum
+  name: Ruhr Museum (Zollverein)
+  city: Essen
+  category: museum_exhibition
+  homepage: https://ruhrmuseum.de
+  calendar_url: https://ruhrmuseum.de/kalender
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: ".card-vertical"
+    title: "h3.card-title"
+    detail_link: "a"
+  date_from_title: true
+  notes: |
+    Custom CMS. Exhibition entries cram title + venue + closing-date phrase
+    into <h3.card-title>; we extract "Bis 10. Januar 2027" via regex from the
+    title and treat the rest as the title (first line).
+
+# Ruhr Museum's full programme (tours, lectures like the Sven Plöger climate
+# talk, family events) lives on a separate URL with TYPO3 calendarize markup.
+# Date text is noisy ("Sonntag 10.5. 11:00 - 13:00") — dateparser handles it
+# via DMY + PREFER_DATES_FROM=future, picking up the year from context.
+- id: ruhr-museum-events
+  name: Ruhr Museum
+  display_name: Ruhr Museum (Veranstaltungen)
+  city: Essen
+  category: other        # categorized via title keywords (tour/lecture/etc.)
+  homepage: https://ruhrmuseum.de
+  calendar_url: https://ruhrmuseum.de/veranstaltungen/kalender
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.calendarize div.state-default"
+    title: "h3"
+    date: "div.mt-3"
+    detail_link: "a"
+  date_extract_regex: '(?:Mo|Di|Mi|Do|Fr|Sa|So|Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag)\.?\s+\d{1,2}\.\d{1,2}\.?\s*\d{1,2}:\d{2}'
+  notes: |
+    TYPO3 calendarize extension. Each .state-default is one occurrence.
+    div.mt-3 returns "<location>... <weekday> DD.MM. HH:MM - HH:MM" so we
+    regex out just the "<weekday> DD.MM. HH:MM" portion before dateparser.
+    No year in source — dateparser infers from PREFER_DATES_FROM=future.
+    Recurring events (Doppelschicht tours) get rolled up by the merger.
+
+- id: red-dot-museum
+  name: Red Dot Design Museum (Zollverein)
+  city: Essen
+  category: museum_exhibition
+  homepage: https://www.red-dot-design-museum.org
+  calendar_url: https://www.red-dot-design-museum.org/essen/exhibitions/current-exhibitions
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: ".card.event-card-shadow"
+    title: ".event-card-title"
+    date: ".event-card-date"
+    detail_link: ".event-card-title a"
+  title_strip_suffixes:
+    - " » More"
+    - "» More"
+  skip_if_title_matches:
+    - "(?i)^Museum closed"
+    - "(?i)^The museum will be closed"
+    - "(?i)^Museum geschlossen"
+  notes: |
+    /programm 404s — actual exhibitions live under /essen/exhibitions/current-exhibitions.
+    Site is multilingual; the canonical URL serves English. Date format is
+    "9 July 2025 – 31 May 2026" (English). Title contains a "» More" suffix
+    we strip out, and the listing includes "Museum closed" notices that we filter.
+
+# Lichtburg Filmpalast Sonderveranstaltungen — gala screenings, cabaret, Bühne.
+# We pick up the SPECIAL programme (61 cards), not the daily film schedule.
+- id: lichtburg-essen
+  name: Lichtburg Essen (Sonderveranstaltungen)
+  city: Essen
+  category: mixed
+  homepage: https://filmspiegel-essen.de/kinos/lichtburg/
+  calendar_url: https://filmspiegel-essen.de/kinos/lichtburg/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.box.event"
+    title: "h3.event-title"
+    date: "span.event-day"
+    detail_link: "a.box-link"
+  skip_if_title_matches:
+    # Filter movie / special-screening items from the listing — mum wants
+    # the cabaret / Bühne / Lesung programme, not Quentin Tarantino in 70mm.
+    # German cinema version notation:
+    - '(?i)\b(?:OmU|OmeU|OV|OF|OVdt|OmdU)\b'
+    # Film stock format markers:
+    - '\b\d{2,3}\s*mm\b'
+    # Parenthetical "(engl. ...)" indicating film language:
+    - '(?i)\(engl\.'
+  notes: |
+    Original lichtburg-essen.de domain has a broken TLS handshake; the active
+    venue page is on filmspiegel-essen.de (the operating company). The page
+    mixes ~20 live events (cabaret, Lesungen, Bühne) and ~40 special movie
+    screenings; skip_if_title_matches drops the latter. Some movies without
+    OmU/OV markers (e.g. plain "Top Gun") will slip through — accept as noise.
+
+- id: alte-synagoge-essen
+  name: Alte Synagoge Essen
+  city: Essen
+  category: mixed
+  homepage: https://www.essen.de/leben/kultur_/alte_synagoge/alte_synagoge_startseite.de.html
+  calendar_url: https://www.essen.de/leben/kultur_/alte_synagoge/veranstaltungen_startseite.de.html
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.bspace.fliesstext"
+    title: "h2.detail"
+    date: "h3.detail"
+  date_extract_regex: '\d{1,2}\.\d{1,2}\.\d{4}'
+  date_find_all: true
+  skip_if_title_matches:
+    - "(?i)^Pop-?up Café"
+  notes: |
+    Original alte-synagoge.essen.de redirects to essen.de/leben/kultur_/.
+    Date prose varies ("Freitag, 08.05.2026, 19 Uhr", "23.09.2025 bis 30.05.2026",
+    "Dienstags, 12-14 Uhr"). date_find_all picks first/last DD.MM.YYYY in text;
+    Pop-up Café (recurring weekly, no concrete date) is filtered out.
+
+- id: theater-courage
+  name: Theater!Courage
+  city: Essen
+  category: theatre
+  homepage: https://theatercourage.de/
+  calendar_url: https://theatercourage.de/spielplan/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.row-event-body"
+    title: "h3.event-title"
+    date: "p.event-datetime"
+    detail_link: "a"
+  date_extract_regex: '\d{1,2}\.\d{1,2}\.\d{4}\s*\|\s*\d{1,2}:\d{2}'
+  title_strip_suffixes:
+    - " Neu!"
+    - " Gastspiel"
+  notes: |
+    Small private theatre, comedies + Gastspiele. Date format
+    "Sonntag, 10.05.2026 | 18:00 Uhr" — regex grabs "DD.MM.YYYY | HH:MM"
+    cleanly. theater-courage.de redirects to theatercourage.de (no hyphen).
+
+- id: folkwang-uni
+  name: Folkwang Universität der Künste
+  city: Essen
+  category: concert
+  homepage: https://www.folkwang-uni.de/
+  calendar_url: https://www.folkwang-uni.de/home/hochschule/veranstaltungen
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.cp-module-event"
+    title: "div.cp-event-content h4"
+    date: "div.cp-date"
+    detail_link: "a.cp-module-partial-link"
+  notes: |
+    Server-rendered TYPO3 calendarize. ~20 events. No iCal export, no year
+    on the page — dateparser PREFER_DATES_FROM=future infers current or next
+    year. cp-date concatenates day-number + month-name spans → "09. Mai".
+
+# Villa Hügel — historic Krupp residence. Currently between major temporary
+# exhibitions (none on the calendar in mid-2026) so we surface only the
+# permanent "Historische Ausstellung Krupp". Replace static_events with a
+# proper scraper config when their next big show goes up.
+- id: villa-huegel
+  name: Villa Hügel
+  city: Essen
+  category: museum_exhibition
+  homepage: https://www.villahuegel.de
+  calendar_url: https://www.villahuegel.de/ausstellungen-und-praesentationen/
+  kind: static
+  source_priority: 0
+  static_events:
+    - title: "Historische Ausstellung Krupp"
+      start: 2025-01-01
+      end: 2026-12-31
+      detail_url: https://www.villahuegel.de/ausstellungen-und-praesentationen/historische-ausstellung-krupp/
+      description: "Dauerausstellung über die Geschichte der Familie und Firma Krupp."
+  notes: |
+    Calendar at /besuch/kalender/ is JS-rendered (no static dates). Currently
+    between temp exhibitions. Hardcoded permanent show keeps Villa Hügel on
+    mum's radar; refresh when a new temp exhibition is announced (re-probe
+    /ausstellungen-und-praesentationen/).
+
+# GOP Varieté-Theater Essen — currently relocating, so only the upcoming
+# "GROOVE" show is on their Essen page. We pick up Essen + the temporary
+# "Artistical Essen" venue using both data-class attributes.
+- id: gop-essen
+  name: GOP Varieté-Theater Essen
+  city: Essen
+  category: theatre
+  homepage: https://www.variete.de/essen/
+  calendar_url: https://www.variete.de/essen/programm
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: 'div.show-wrap.row[data-class*="Essen"]'
+    title: '.btn-show > a'
+    date: '.info'
+    detail_link: '.btn-show > a'
+  date_extract_regex: '(?:ab\s+)?\w+\s+\d{4}'
+  notes: |
+    Variety theatre. Date format "ab September 2026" or "3. Juli bis 27. Sept."
+    Regex grabs "MONTH YEAR" pattern; "ab" prefix optional. Open-ended dates
+    treated as start = first of month. data-class*="Essen" matches both the
+    main Essen venue (currently in transition) and the temporary "Artistical
+    Essen" satellite.
+
+# Museum Domschatz Essen — closed for renovation through 18 June 2026. Static
+# notice keeps it visible so mum knows the closure status; replace once the
+# museum reopens with a proper scraper.
+- id: domschatz-essen
+  name: Domschatz Essen
+  city: Essen
+  category: museum_exhibition
+  homepage: https://www.domschatz-essen.de
+  kind: static
+  source_priority: 0
+  static_events:
+    - title: "Wegen Renovierung geschlossen"
+      start: 2026-03-30
+      end: 2026-06-18
+      audience: educational
+      description: "Das Museum öffnet wieder ab dem 19. Juni 2026."
+  notes: |
+    Cathedral Treasury Museum, closed for renovation. audience=educational
+    so it shows dimmed (not competing with active programme). Replace this
+    static entry with a real scraper config after the June reopening — their
+    /termine page should populate then.
+
+# ============================================================================
+# DÜSSELDORF
+# ============================================================================
+
+- id: kunstsammlung-nrw
+  name: Kunstsammlung NRW (K20 + K21)
+  city: Düsseldorf
+  category: museum_exhibition
+  homepage: https://www.kunstsammlung.de
+  calendar_url: https://www.kunstsammlung.de/de/ausstellungen
+  kind: unknown
+  source_priority: 0
+  produces_venue_ids:
+    - k20-duesseldorf
+    - k21-duesseldorf
+
+- id: kunstpalast
+  name: Kunstpalast
+  city: Düsseldorf
+  category: museum_exhibition
+  homepage: https://www.kunstpalast.de
+  calendar_url: https://www.kunstpalast.de/de/programm/ausstellungen/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "ul.kunstpalast-tile-list > li.splide__slide"
+    title: "div.kunstpalast-tile-list-item-content-text h3"
+    detail_link: "div.kunstpalast-tile-list-item-image a"
+  date_from_title: true
+  date_from_title_mode: range
+  notes: |
+    Captures the UPCOMING-exhibition tile carousels. Current exhibitions live
+    in a separate "teaser-events" section (see kunstpalast-current below).
+    Date is concatenated inside the h3 title, e.g. "DIE GROSSE 5.7.–9.8.2026".
+
+# Kunstpalast also features ~4 current exhibitions in a different "teaser-events"
+# section per page — these are the headliners (Monet · Cézanne · Matisse, etc.)
+# and would otherwise be missed entirely. Same display venue, different selectors.
+- id: kunstpalast-current
+  name: Kunstpalast
+  city: Düsseldorf
+  category: museum_exhibition
+  homepage: https://www.kunstpalast.de
+  calendar_url: https://www.kunstpalast.de/de/programm/ausstellungen/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "section.kunstpalast-block-teaser-events"
+    title: ".headline-wrapper h2.headline"
+    date: ".date-wrapper .date"
+    detail_link: "a.teaser-events__button"
+    description: ".headline-wrapper h3.subheadline"
+  notes: |
+    Captures the current-exhibition headliners (~4 per page). Title comes from
+    H2; subtitle (H3, e.g. "The Scharf Collection") goes into description.
+    Date format: "12.3.2026 – 9.8.2026" — handled by _parse_date_range default.
+
+- id: kunsthalle-duesseldorf
+  name: Kunsthalle Düsseldorf
+  city: Düsseldorf
+  category: museum_exhibition
+  homepage: https://www.kunsthalle-duesseldorf.de
+  calendar_url: https://www.kunsthalle-duesseldorf.de/ausstellungen/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "section.exhibitions__current div.exh-card"
+    title: "figcaption.exh-card__caption a"
+    date_start: "figcaption.exh-card__caption time:nth-of-type(1)@datetime"
+    date_end: "figcaption.exh-card__caption time:nth-of-type(2)@datetime"
+    detail_link: "figcaption.exh-card__caption a"
+  title_strip_regex:
+    # The title link's text contains the date range too; strip it from display.
+    - '\d{1,2}\.\d{1,2}\.\s*[–—-]\s*\d{1,2}\.\d{1,2}\.\d{4}'
+  notes: |
+    URL changed from /de/ausstellungen to /ausstellungen/. Cleanest date format
+    of any venue: <time datetime="YYYY-MM-DD"> ISO attributes. The @datetime
+    selector suffix tells the parser to read the attribute, not the visible
+    text (which uses German short form like "10.4.").
+    Filtered to .exhibitions__current — archive section has 582 historical cards.
+
+- id: kunstverein-duesseldorf
+  name: Kunstverein für die Rheinlande und Westfalen
+  city: Düsseldorf
+  category: museum_exhibition
+  homepage: https://kunstverein-duesseldorf.de
+  calendar_url: https://kunstverein-duesseldorf.de/ausstellungen/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.kv-card"
+    title: "h2"
+    date_start: "p.kv-card__date time:nth-of-type(1)@datetime"
+    date_end: "p.kv-card__date time:nth-of-type(2)@datetime"
+    detail_link: "a"
+  notes: |
+    Cleanest schema in the DD set — paired <time datetime="ISO"> elements.
+    URL changed from /programm to /ausstellungen/. They post one show at a
+    time, so expect 0-1 events per scrape; not a bug.
+
+- id: nrw-forum
+  name: NRW-Forum
+  city: Düsseldorf
+  category: museum_exhibition
+  homepage: https://www.nrw-forum.de
+  calendar_url: https://www.nrw-forum.de/ausstellungen
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.kombiBox07.row"
+    title: "div.text h2"
+    date: "div.text p strong"
+    detail_link: "div.text a.blocked-link"
+  date_extract_regex: '\d{1,2}\.\s?(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z]*\s?20\d{2}\s*[–—-]\s*\d{1,2}\.\s?(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z]*\s?20\d{2}'
+  notes: |
+    URL changed from /programm to /ausstellungen. Photography museum, ~3
+    exhibitions at a time. Date is German prose ("17. September 2026 –
+    23. Mai 2027") inside <strong>; regex extracts the start–end pair.
+
+- id: hetjens
+  name: Hetjens — Deutsches Keramikmuseum
+  city: Düsseldorf
+  category: museum_exhibition
+  homepage: https://www.duesseldorf.de/hetjens
+  calendar_url: https://www.duesseldorf.de/hetjens/ausstellungen
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.tx-itk-expander.no-bottom-border"
+    title: "div.itk-expander-teaser h1:last-of-type"
+    date: "div.itk-expander-teaser p strong"
+  date_extract_regex: '\d{1,2}\.\s?(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z]*\s?20\d{2}'
+  date_find_all: true
+  notes: |
+    Stadt Düsseldorf TYPO3 itk-expander. Listing IS the detail (no per-card
+    link). date_find_all=true → regex finds every date; first becomes start,
+    last becomes end. Handles "16. Oktober 2025 bis 25. Januar 2026 -
+    verlängert bis 31. Mai 2026" correctly (start=Oct 2025, end=May 2026).
+
+- id: robert-schumann-saal
+  name: Robert-Schumann-Saal
+  city: Düsseldorf
+  category: concert
+  homepage: https://www.robert-schumann-saal.de
+  calendar_url: https://www.kunstpalast.de/de/programm/musik-buehne/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "li.splide__slide.calendar-list-item"
+    title: "h4.grid-headline"
+    date: "span.calendar-date-time"
+    detail_link: "div.kunstpalast-tile-list-item-image a"
+  notes: |
+    Robert-Schumann-Saal is administratively part of Kunstpalast — the
+    standalone domain 301-redirects to Kunstpalast's musik-buehne calendar.
+    Same Kunstpalast calendar engine as kunstpalast-current. Date format:
+    "Fr, 29.5. 2026 20:00" — concatenated weekday/day/month/year/time.
+
+- id: oper-am-rhein
+  name: Deutsche Oper am Rhein
+  display_name: Oper am Rhein
+  city: Düsseldorf
+  category: mixed
+  homepage: https://www.operamrhein.de
+  calendar_url: https://www.operamrhein.de/spielplan/kalender/
+  kind: ical
+  source_priority: 0
+  produces_venue_ids:
+    - oper-duesseldorf
+    - ballett-duesseldorf
+  ical_pattern: '/kalender-eintrag/\d+/ical-\d{4}-\d{2}-\d{2}-\d+\.ics'
+  detail_pattern: '/spielplan/kalender/[^"/]+/(?P<id>\d+)/'
+  stage_resolver:
+    - match: ["Opernhaus", "Düsseldorf"]
+      venue_id: oper-duesseldorf
+      venue_name: "Opernhaus Düsseldorf"
+      city: Düsseldorf
+      default_category: opera
+    - match: ["Balletthaus", "Ballett im Park"]
+      venue_id: ballett-duesseldorf
+      venue_name: "Balletthaus"
+      city: Düsseldorf
+      default_category: ballet
+  skip_if_location_matches:
+    # Drop performances of the same production playing at the Duisburg house —
+    # we'd see them again from the duisburg side later. Keeps DD calendar clean.
+    - "(?i)Duisburg"
+  notes: |
+    Same TYPO3 spiritec calendar module as TUP Essen — per-event .ics URLs at
+    /kalender-eintrag/<id>/ical-... and detail URLs at /spielplan/kalender/<slug>/<id>/.
+    Mixed Düsseldorf+Duisburg listing; we filter LOCATION to drop Duisburg shows.
+
+- id: tonhalle-duesseldorf
+  name: Tonhalle Düsseldorf (Düsseldorfer Symphoniker)
+  city: Düsseldorf
+  category: concert
+  homepage: https://www.tonhalle.de
+  calendar_url: https://www.tonhalle.de/eigenveranstaltungen-der-tonhalle
+  kind: unknown
+  source_priority: 0
+  notes: Spot-check showed no JSON-LD. Check for .ics — many concert halls on TYPO3 expose it.
+
+- id: dhaus
+  name: Düsseldorfer Schauspielhaus
+  display_name: Schauspielhaus Düsseldorf
+  city: Düsseldorf
+  category: theatre
+  homepage: https://www.dhaus.de
+  calendar_url: https://www.dhaus.de/programm
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.performance.js-schedule-element"
+    title: "h4.performance__title span[itemprop='name']"
+    date_start: "meta[itemprop='startDate']@content"
+    detail_link: "h4.performance__title a"
+  notes: |
+    URL changed from /spielplan/ to /programm. ~224 performances, all at the same
+    Düsseldorf address (Gustaf-Gründgens-Platz 1) — no city filtering needed.
+    Schema.org HTML microdata: startDate is in <meta itemprop="startDate" content="ISO">.
+    The @content selector suffix reads the attribute. Cancellations would need
+    skip-class detection (.performance--is-cancelled) — not yet wired.
+
+- id: sies-hoeke
+  name: Galerie Sies + Höke
+  city: Düsseldorf
+  category: vernissage
+  homepage: https://www.sieshoeke.com
+  calendar_url: https://www.sieshoeke.com/exhibitions
+  kind: unknown
+  source_priority: 0
+  notes: Private gallery — vernissage dates often only on "current exhibitions" page or Instagram. Best-effort.
+
+- id: konrad-fischer
+  name: Konrad Fischer Galerie
+  city: Düsseldorf
+  category: vernissage
+  homepage: https://konradfischergalerie.de
+  calendar_url: https://konradfischergalerie.de/exhibitions
+  kind: unknown
+  source_priority: 0
+  notes: Same caveat as Sies + Höke.
+
+# ============================================================================
+# RECKLINGHAUSEN
+# ============================================================================
+
+- id: ruhrfestspiele
+  name: Ruhrfestspiele Recklinghausen
+  city: Recklinghausen
+  category: theatre
+  homepage: https://www.ruhrfestspiele.de
+  calendar_url: https://www.ruhrfestspiele.de/programm
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "article.program-grid-item"
+    title: "h3.program-grid-item__title a"
+    date: "@data-days"
+    detail_link: "h3.program-grid-item__title a"
+  date_extract_regex: '\d{4}-\d{2}-\d{2}'
+  date_find_all: true
+  notes: |
+    Major German theatre festival, May-June season. ~70 productions across
+    several Recklinghausen stages (Festspielhaus, Großes Haus, Drübbelken,
+    Grüner Hügel — all bundled under one source). Each <article> carries
+    data-days='["2026-05-04",...]'; @data-days selector reads the attribute
+    from the item element. date_find_all=true picks first/last ISO date for
+    start/end of the run.
+
+- id: ikonen-museum-recklinghausen
+  name: Ikonen-Museum Recklinghausen
+  city: Recklinghausen
+  category: museum_exhibition
+  homepage: https://ikonen-museum.com
+  calendar_url: https://ikonen-museum.com/veranstaltungen/termine
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.event-list-item"
+    title: "div.title h4"
+    date: "div.date-column .event-startdate"
+  date_extract_regex: '\d{1,2}\.\d{1,2}\.'
+  notes: |
+    Eastern European icons collection. TYPO3 sf-event-mgt extension. Date in
+    source is "DD.MM." with NO year — dateparser PREFER_DATES_FROM=future
+    infers current/next year. No per-card detail link — listing IS the detail.
+    Domain is .com (not .de — city portal links to wrong domain).
+
+- id: kunsthalle-recklinghausen
+  name: Kunsthalle Recklinghausen
+  city: Recklinghausen
+  category: museum_exhibition
+  homepage: https://kunsthalle-recklinghausen.de
+  calendar_url: https://kunsthalle-recklinghausen.de/programm/kalender
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.event-list-item"
+    title: "div.title h4"
+    date: "div.date-column .event-startdate"
+  date_extract_regex: '\d{1,2}\.\d{1,2}\.'
+  notes: |
+    Same TYPO3 sf-event-mgt module as ikonen-museum-recklinghausen.
+    Found via the city's Museen page; currently shows the Ragnar Kjartansson
+    production for Ruhrfestspiele 2026.
+
+# ============================================================================
+# DUISBURG
+# ============================================================================
+
+- id: lehmbruck-museum
+  name: Lehmbruck Museum
+  city: Duisburg
+  category: museum_exhibition
+  homepage: https://lehmbruckmuseum.de
+  calendar_url: https://lehmbruckmuseum.de/veranstaltungen
+  kind: unknown
+  source_priority: 0
+
+- id: mkm-kueppersmuehle
+  name: MKM Museum Küppersmühle
+  city: Duisburg
+  category: museum_exhibition
+  homepage: https://www.museum-kueppersmuehle.de
+  calendar_url: https://www.museum-kueppersmuehle.de/ausstellungen
+  kind: unknown
+  source_priority: 0
+
+- id: duisburger-philharmoniker
+  name: Duisburger Philharmoniker (Mercatorhalle)
+  city: Duisburg
+  category: concert
+  homepage: https://www.duisburger-philharmoniker.de
+  calendar_url: https://www.duisburger-philharmoniker.de/spielplan
+  kind: unknown
+  source_priority: 0
+
+# ============================================================================
+# BOCHUM
+# ============================================================================
+
+- id: schauspielhaus-bochum
+  name: Schauspielhaus Bochum
+  city: Bochum
+  category: theatre
+  homepage: https://www.schauspielhausbochum.de
+  calendar_url: https://www.schauspielhausbochum.de/de/spielplan
+  kind: unknown
+  source_priority: 0
+
+- id: bochumer-symphoniker
+  name: Bochumer Symphoniker (Anneliese Brost Musikforum Ruhr)
+  city: Bochum
+  category: concert
+  homepage: https://www.bochumer-symphoniker.de
+  calendar_url: https://www.bochumer-symphoniker.de/konzerte
+  kind: unknown
+  source_priority: 0
+
+- id: kunstmuseum-bochum
+  name: Kunstmuseum Bochum
+  city: Bochum
+  category: museum_exhibition
+  homepage: https://www.kunstmuseumbochum.de
+  calendar_url: https://www.kunstmuseumbochum.de/ausstellungen
+  kind: unknown
+  source_priority: 0
+
+# ============================================================================
+# DORTMUND
+# ============================================================================
+
+- id: theater-dortmund
+  name: Theater Dortmund (Oper / Ballett / Schauspiel / Philharmoniker)
+  city: Dortmund
+  category: mixed
+  homepage: https://www.theaterdo.de
+  calendar_url: https://www.theaterdo.de/spielplan/
+  kind: unknown
+  source_priority: 0
+  produces_venue_ids:
+    - oper-dortmund
+    - ballett-dortmund
+    - schauspiel-dortmund
+    - dortmunder-philharmoniker
+
+- id: konzerthaus-dortmund
+  name: Konzerthaus Dortmund
+  city: Dortmund
+  category: concert
+  homepage: https://www.konzerthaus-dortmund.de
+  calendar_url: https://www.konzerthaus-dortmund.de/de/programm/spielplan/
+  kind: unknown
+  source_priority: 0
+
+- id: museum-ostwall
+  name: Museum Ostwall im Dortmunder U
+  city: Dortmund
+  category: museum_exhibition
+  homepage: https://dortmunder-u.de/museum-ostwall/
+  calendar_url: https://dortmunder-u.de/museum-ostwall/ausstellungen/
+  kind: unknown
+  source_priority: 0
+
+# ============================================================================
+# MÜLHEIM A.D. RUHR
+# ============================================================================
+
+- id: theater-an-der-ruhr
+  name: Theater an der Ruhr
+  city: Mülheim a.d. Ruhr
+  category: theatre
+  homepage: https://www.theater-an-der-ruhr.de
+  calendar_url: https://www.theater-an-der-ruhr.de/spielplan
+  kind: unknown
+  source_priority: 0
+
+- id: ringlokschuppen-ruhr
+  name: Ringlokschuppen Ruhr
+  city: Mülheim a.d. Ruhr
+  category: theatre
+  homepage: https://ringlokschuppen.de
+  calendar_url: https://ringlokschuppen.de/programm
+  kind: unknown
+  source_priority: 0
+
+# ============================================================================
+# OBERHAUSEN
+# ============================================================================
+
+- id: ludwiggalerie
+  name: LUDWIGGALERIE Schloss Oberhausen
+  city: Oberhausen
+  category: museum_exhibition
+  homepage: https://www.ludwiggalerie.de
+  calendar_url: https://www.ludwiggalerie.de/ausstellungen
+  kind: unknown
+  source_priority: 0
+
+- id: gasometer-oberhausen
+  name: Gasometer Oberhausen
+  city: Oberhausen
+  category: museum_exhibition
+  homepage: https://www.gasometer.de
+  calendar_url: https://www.gasometer.de/de/ausstellungen.html
+  kind: unknown
+  source_priority: 0
+
+# ============================================================================
+# GELSENKIRCHEN
+# ============================================================================
+
+- id: musiktheater-im-revier
+  name: Musiktheater im Revier (MiR)
+  city: Gelsenkirchen
+  category: mixed
+  homepage: https://musiktheater-im-revier.de
+  calendar_url: https://musiktheater-im-revier.de/spielplan
+  kind: unknown
+  source_priority: 0
+  produces_venue_ids:
+    - mir-oper
+    - mir-ballett
+    - neue-philharmonie-westfalen
+
+# ============================================================================
+# WUPPERTAL
+# ============================================================================
+
+- id: pina-bausch
+  name: Tanztheater Wuppertal Pina Bausch
+  city: Wuppertal
+  category: ballet
+  homepage: https://www.pina-bausch.de
+  calendar_url: https://www.pina-bausch.de/de/vorstellungen
+  kind: unknown
+  source_priority: 0
+
+- id: wuppertaler-buehnen
+  name: Wuppertaler Bühnen (Oper / Schauspiel / Sinfonieorchester)
+  city: Wuppertal
+  category: mixed
+  homepage: https://www.wuppertaler-buehnen.de
+  calendar_url: https://www.wuppertaler-buehnen.de/spielplan
+  kind: unknown
+  source_priority: 0
+  produces_venue_ids:
+    - oper-wuppertal
+    - schauspiel-wuppertal
+    - sinfonieorchester-wuppertal
+
+- id: von-der-heydt
+  name: Von der Heydt-Museum
+  city: Wuppertal
+  category: museum_exhibition
+  homepage: https://www.von-der-heydt-museum.de
+  calendar_url: https://www.von-der-heydt-museum.de/ausstellungen
+  kind: unknown
+  source_priority: 0
+
+# ============================================================================
+# KREFELD
+# ============================================================================
+
+- id: kunstmuseen-krefeld
+  name: Kunstmuseen Krefeld (Kaiser Wilhelm + Haus Lange + Haus Esters)
+  city: Krefeld
+  category: museum_exhibition
+  homepage: https://kunstmuseenkrefeld.de
+  calendar_url: https://kunstmuseenkrefeld.de/ausstellungen
+  kind: unknown
+  source_priority: 0
+  produces_venue_ids:
+    - kaiser-wilhelm-museum
+    - haus-lange
+    - haus-esters
+
+# ============================================================================
+# NEUSS
+# ============================================================================
+
+- id: insel-hombroich
+  name: Museum Insel Hombroich
+  city: Neuss
+  category: museum_exhibition
+  homepage: https://www.inselhombroich.de
+  calendar_url: https://www.inselhombroich.de/de/veranstaltungen
+  kind: unknown
+  source_priority: 0
+
+- id: langen-foundation
+  name: Langen Foundation (Tadao Ando)
+  city: Neuss
+  category: museum_exhibition
+  homepage: https://langenfoundation.de
+  calendar_url: https://langenfoundation.de/ausstellungen
+  kind: unknown
+  source_priority: 0
+
+- id: clemens-sels-museum
+  name: Clemens Sels Museum Neuss
+  city: Neuss
+  category: museum_exhibition
+  homepage: https://clemens-sels-museum-neuss.de
+  calendar_url: https://clemens-sels-museum-neuss.de/ausstellungen
+  kind: unknown
+  source_priority: 0
+
+# ============================================================================
+# REGIONAL AGGREGATORS (lower priority — used to fill gaps + cross-check)
+# ============================================================================
+
+- id: ruhrbuehnen
+  name: RuhrBühnen Spielplan (22 Ruhr stages combined)
+  city: __aggregator__
+  category: mixed
+  homepage: https://www.ruhrbuehnen.de
+  calendar_url: https://www.ruhrbuehnen.de/de/spielplan/
+  kind: unknown
+  source_priority: 5
+  notes: |
+    Covers Aalto, MiR, Theater Dortmund, Schauspielhaus Bochum, Theater Oberhausen and others
+    in one filterable view. Useful as cross-check for performing-arts coverage. NEVER let
+    this override a venue's own listing — venue's own data wins on dedup.
+
+- id: visitessen-events
+  name: visitessen.de Veranstaltungskalender
+  city: __aggregator__
+  category: mixed
+  homepage: https://www.visitessen.de
+  calendar_url: https://www.visitessen.de/veranstaltungen
+  kind: unknown
+  source_priority: 9
+  notes: City tourism aggregator, lower priority than venue's own site.

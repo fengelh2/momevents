@@ -1,0 +1,128 @@
+# momEvents — featured / "must-see" highlights
+#
+# An event is flagged as featured if EITHER:
+#   1. its title (or description) contains any string from `featured_keywords` (case-insensitive substring), OR
+#   2. it matches an entry in `featured_events` (venue_id + title fuzzy match >= 85)
+#
+# Featured events appear pinned at the top of events.html in a "Nicht verpassen"
+# section AND get a ★ badge inline within their week.
+#
+# The pinned section is sorted by closing-date-soonest-first (creates urgency,
+# surfaces things that are about to end). Hard cap: 4 entries.
+#
+# Updates are welcome — when mum mentions an artist or composer she wants to be
+# alerted about, add to featured_keywords. When she tells us about a specific
+# show ahead of time, add to featured_events.
+
+# ─── Auto-flag by keywords (case-insensitive substring match on title) ───────
+# Seed list — covers the canonical "drop everything" names a culturally engaged
+# senior would recognize. Curated 2026-05-09. Add to it as needed.
+
+featured_keywords:
+  # Visual art — Old Masters & 19th-c.
+  - Vermeer
+  - Rembrandt
+  - Caravaggio
+  - Botticelli
+  - Dürer
+  - Cranach
+  - Tizian
+  - Velázquez
+  - Goya
+  - Turner
+
+  # Visual art — Impressionism / early modernism (the obvious blockbusters)
+  - Monet
+  - Manet
+  - Renoir
+  - Cézanne
+  - Degas
+  - Van Gogh
+  - Gauguin
+  - Toulouse-Lautrec
+  - Klimt
+  - Munch
+  - Schiele
+
+  # Visual art — Modern / 20th c.
+  - Picasso
+  - Matisse
+  - Kandinsky
+  - Beckmann
+  - Kirchner
+  - Klee
+  - Chagall
+  - Mondrian
+  - Hopper
+  - Bacon
+  - Freud
+  - Warhol
+  - Hockney
+  - Richter
+  - Polke
+  - Beuys
+  - Kiefer
+
+  # Visual art — non-Western / specific touring shows that travel internationally
+  - Hokusai
+  - Hiroshige
+  - Frida Kahlo
+  - Diego Rivera
+
+  # Music — composers whose anniversaries / cycles draw crowds
+  - Beethoven
+  - Mozart
+  - Bach
+  - Brahms
+  - Mahler
+  - Wagner
+  - Verdi
+  - Puccini
+  - Schubert
+  - Schumann
+  - Strauss
+  - Tschaikowsky
+  - Tchaikovsky
+  - Debussy
+  - Ravel
+  - Schostakowitsch
+  - Shostakovich
+
+  # Performers / conductors who travel and sell out
+  - Pina Bausch
+  - Anne-Sophie Mutter
+  - Lang Lang
+  - Kirill Petrenko
+  - Daniel Barenboim
+  - Igor Levit
+  - Yuja Wang
+  - Bolschoi
+  - Bolshoi
+
+  # Major archaeology / civilizations touring shows
+  - Terrakotta
+  - Terracotta
+  - Tutanchamun
+  - Tutankhamun
+  - Pompeji
+  - Pompeii
+  - Maya
+  - Inka
+  - Inca
+
+  # Specific recurring high-profile collections / shows
+  - Sammlung Scharf
+  - Scharf-Gerstenberg
+  - documenta
+
+# ─── Manual flags for things keywords would miss ─────────────────────────────
+# Use venue_id + a fuzzy title match. `until:` is the show's closing date — the
+# entry auto-expires after that, so this list won't bit-rot.
+#
+# Format:
+#   - venue_id: <id from venues.yaml>
+#     title_match: "<exact or near-exact title>"
+#     until: YYYY-MM-DD
+#     note: "<short editorial line shown on the highlight card>"
+
+featured_events: []

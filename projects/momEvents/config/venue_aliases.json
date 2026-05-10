@@ -1,0 +1,101 @@
+{
+  "_comment": "Hand-curated mapping of venue-name variants to canonical venue_id. Critical for dedup when the same event appears on the venue's own site AND on RuhrBühnen / visitessen.de. Add new entries here whenever the dedup pass logs an unmatched alias. See workflows/rebuild_calendar.md.",
+
+  "aalto-essen": [
+    "Aalto",
+    "Aalto Theater",
+    "Aalto-Theater",
+    "Aalto-Musiktheater",
+    "Aalto Musiktheater",
+    "Aalto Theater Essen",
+    "Theater und Philharmonie Essen — Aalto"
+  ],
+  "grillo-essen": [
+    "Grillo",
+    "Grillo-Theater",
+    "Grillo Theater",
+    "Schauspiel Essen",
+    "Schauspielhaus Essen"
+  ],
+  "philharmonie-essen": [
+    "Philharmonie Essen",
+    "Alfried Krupp Saal",
+    "Philharmonie"
+  ],
+  "k20-duesseldorf": [
+    "K20",
+    "K20 Grabbeplatz",
+    "Kunstsammlung NRW K20"
+  ],
+  "k21-duesseldorf": [
+    "K21",
+    "K21 Ständehaus",
+    "Kunstsammlung NRW K21"
+  ],
+  "oper-duesseldorf": [
+    "Opernhaus Düsseldorf",
+    "Deutsche Oper am Rhein Düsseldorf",
+    "Opernhaus"
+  ],
+  "oper-duisburg": [
+    "Theater Duisburg",
+    "Deutsche Oper am Rhein Duisburg"
+  ],
+  "oper-dortmund": [
+    "Opernhaus Dortmund",
+    "Theater Dortmund Oper",
+    "Oper Dortmund"
+  ],
+  "schauspiel-dortmund": [
+    "Schauspielhaus Dortmund",
+    "Theater Dortmund Schauspiel"
+  ],
+  "ballett-dortmund": [
+    "Ballett Dortmund",
+    "Theater Dortmund Ballett"
+  ],
+  "dortmunder-philharmoniker": [
+    "Dortmunder Philharmoniker",
+    "Konzerthaus Dortmund Philharmoniker"
+  ],
+  "mir-oper": [
+    "Musiktheater im Revier",
+    "MiR Oper",
+    "MiR"
+  ],
+  "mir-ballett": [
+    "Ballett im Revier",
+    "MiR Ballett"
+  ],
+  "neue-philharmonie-westfalen": [
+    "Neue Philharmonie Westfalen",
+    "NPW"
+  ],
+  "oper-wuppertal": [
+    "Oper Wuppertal",
+    "Wuppertaler Bühnen Oper"
+  ],
+  "schauspiel-wuppertal": [
+    "Schauspiel Wuppertal",
+    "Wuppertaler Bühnen Schauspiel"
+  ],
+  "sinfonieorchester-wuppertal": [
+    "Sinfonieorchester Wuppertal",
+    "Historische Stadthalle Wuppertal Sinfoniekonzert"
+  ],
+  "kaiser-wilhelm-museum": [
+    "Kaiser Wilhelm Museum",
+    "KWM",
+    "Kunstmuseen Krefeld KWM"
+  ],
+  "haus-lange": [
+    "Haus Lange",
+    "Mies-Villa Haus Lange",
+    "Kunstmuseen Krefeld Haus Lange"
+  ],
+  "haus-esters": [
+    "Haus Esters",
+    "Mies-Villa Haus Esters",
+    "Kunstmuseen Krefeld Haus Esters"
+  ]
+}

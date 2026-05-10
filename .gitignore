@@ -1,0 +1,46 @@
+# ─── Secrets / private keys ────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+*.token
+secrets/
+credentials.json
+token.json
+.polybets-key*
+
+# ─── Working / temp files (safe to drop) ──────────────────────────────────
+.tmp/
+.tmp_*
+projects/momEvents/.tmp/
+projects/ipoDatabase/data/prospectuses/
+
+# ─── Other projects — not part of the momEvents deployment ───────────────
+# Add a new line here if you start another project so nothing leaks.
+projects/polyBets/
+projects/ipoDatabase/
+projects/krollAccountingGuidlinesDatabase/
+projects/stockPicker/
+projects/_Sample Project/
+
+# ─── Tools that are not used by momEvents ─────────────────────────────────
+tools/dedup_polybets_snapshots.py
+
+# ─── IDE / agent state (private) ──────────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+
+# ─── Python ───────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# ─── OS ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
