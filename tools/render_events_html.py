@@ -127,30 +127,57 @@ def _normalize_chip_name(name: str) -> str:
     return name.strip()
 
 
-def _when_tags(start: Optional[datetime], end: Optional[datetime], now: datetime) -> list[str]:
-    """Compute Wann filter tags for an event.
+WHEN_OPTIONS = [
+    ("this-week",     "Diese Woche"),
+    ("next-week",     "Nächste Woche"),
+    ("this-weekend",  "Dieses Wochenende"),
+    ("next-weekend",  "Nächstes Wochenende"),
+    ("this-month",    "Diesen Monat"),
+    ("next-month",    "Nächsten Monat"),
+]
+ALL_WHEN_TAGS = [slot for slot, _ in WHEN_OPTIONS]
 
-    Returns subset of {"this-week", "weekend", "next-week"}. An ongoing
-    exhibition (end > now, start <= now) qualifies for ALL three so it appears
-    under any time filter — mum can visit anytime.
+
+def _when_tags(start: Optional[datetime], end: Optional[datetime], now: datetime) -> list[str]:
+    """Compute Wann filter tags for an event. Returns a subset of ALL_WHEN_TAGS.
+
+    An ongoing exhibition (end > now, start <= now) qualifies for ALL tags
+    since it's open across every relevant window.
     """
     if start is None:
         return []
-    tags: list[str] = []
     is_ongoing = end is not None and end > now and start <= now
     if is_ongoing:
-        return ["this-week", "weekend", "next-week"]
-    iso_year_now, iso_week_now, _ = now.isocalendar()
-    iso_year_e, iso_week_e, iso_dow_e = start.isocalendar()
-    if iso_year_e == iso_year_now and iso_week_e == iso_week_now:
+        return list(ALL_WHEN_TAGS)
+
+    today = now.date()
+    sd = start.date()
+
+    # Week boundaries (Mon-Sun, Python weekday: 0=Mon, 5=Sat, 6=Sun)
+    this_monday = today - timedelta(days=today.weekday())
+    this_sunday = this_monday + timedelta(days=6)
+    next_monday = this_monday + timedelta(days=7)
+    next_sunday = next_monday + timedelta(days=6)
+    # Month boundaries (use day-32 trick to roll forward)
+    this_m_start = today.replace(day=1)
+    next_m_start = (this_m_start + timedelta(days=32)).replace(day=1)
+    after_next_m = (next_m_start + timedelta(days=32)).replace(day=1)
+
+    tags: list[str] = []
+    if this_monday <= sd <= this_sunday:
         tags.append("this-week")
-    if iso_year_e == iso_year_now and iso_week_e == iso_week_now + 1:
+        if sd.weekday() in (5, 6):
+            tags.append("this-weekend")
+    elif next_monday <= sd <= next_sunday:
         tags.append("next-week")
-    # Wochenende = Sa/So (ISO weekday 6 = Sat, 7 = Sun) of THIS week or NEXT
-    if iso_dow_e in (6, 7) and (
-        (iso_year_e == iso_year_now and iso_week_e in (iso_week_now, iso_week_now + 1))
-    ):
-        tags.append("weekend")
+        if sd.weekday() in (5, 6):
+            tags.append("next-weekend")
+
+    if this_m_start <= sd < next_m_start:
+        tags.append("this-month")
+    elif next_m_start <= sd < after_next_m:
+        tags.append("next-month")
+
     return tags
 
 # ─── public API ──────────────────────────────────────────────────────────────
@@ -507,6 +534,29 @@ def _render_html(
         )
     venue_css = "\n    ".join(venue_css_rules)
 
+    # Per-Wann-slot CSS — hide rows/cards/days/weeks not matching the active
+    # tag, audience-aware so slots that contain only kids/active rows still
+    # collapse cleanly. Plus chip-active highlight per slot.
+    when_css_rules = []
+    for slot, _label in WHEN_OPTIONS:
+        when_css_rules.append(
+            f'#w-{slot}:checked ~ .agenda .row:not([data-when~="{slot}"]), '
+            f'#w-{slot}:checked ~ .agenda .day:not(:has(.row[data-when~="{slot}"]:not(.audience-kids):not(.audience-active))), '
+            f'#w-{slot}:checked ~ .agenda .week:not(:has(.row[data-when~="{slot}"]:not(.audience-kids):not(.audience-active))), '
+            f'#w-{slot}:checked ~ .featured .featured-card:not([data-when~="{slot}"]), '
+            f'#w-{slot}:checked ~ .featured:not(:has(.featured-card[data-when~="{slot}"])) '
+            f'{{ display: none; }}'
+        )
+        when_css_rules.append(
+            f'#w-{slot}:checked ~ .filter-bar .filter-chip[for="w-{slot}"] '
+            f'{{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}'
+        )
+    when_css_rules.append(
+        '#w-all:checked ~ .filter-bar .filter-chip[for="w-all"] '
+        '{ background: var(--ink); color: var(--bg); border-color: var(--ink); }'
+    )
+    when_css = "\n    ".join(when_css_rules)
+
     # Per-city CSS: hide rows/cards/days/weeks not matching, show empty-state,
     # show that city's venue-chip row, mark chip-row as active.
     # Plus city × category combined rules — when both filters are active, hide
@@ -555,7 +605,7 @@ def _render_html(
     city_css = "\n    ".join(city_css_rules)
 
     parts: list[str] = []
-    parts.append(_PAGE_HEAD.format(title=html.escape(title), venue_css=venue_css, city_css=city_css))
+    parts.append(_PAGE_HEAD.format(title=html.escape(title), venue_css=venue_css, city_css=city_css, when_css=when_css))
     parts.append('<div class="page">')
 
     # Hidden radio inputs — must be siblings of .featured/.agenda for the
@@ -570,11 +620,10 @@ def _render_html(
     parts.append('  <input type="radio" name="cityfilter" id="c-all" class="filter-input" checked>')
     for cslug, _ in cities:
         parts.append(f'  <input type="radio" name="cityfilter" id="c-{cslug}" class="filter-input">')
-    # When filter (Wann) — single-select like Wo / Was
+    # When filter (Wann) — single-select like Wo / Was. Slots come from WHEN_OPTIONS.
     parts.append('  <input type="radio" name="whenfilter" id="w-all" class="filter-input" checked>')
-    parts.append('  <input type="radio" name="whenfilter" id="w-this-week" class="filter-input">')
-    parts.append('  <input type="radio" name="whenfilter" id="w-weekend" class="filter-input">')
-    parts.append('  <input type="radio" name="whenfilter" id="w-next-week" class="filter-input">')
+    for slot, _label in WHEN_OPTIONS:
+        parts.append(f'  <input type="radio" name="whenfilter" id="w-{slot}" class="filter-input">')
     # Independent checkbox — revealing kids/active events when checked
     parts.append('  <input type="checkbox" id="show-extras" class="filter-input">')
     # Per-chip checkboxes — default checked. Unticking hides those rows.
@@ -609,10 +658,9 @@ def _render_html(
     parts.append('  </nav>')
     parts.append('  <nav class="filter-bar filter-bar-when" aria-label="Zeitraum filtern">')
     parts.append('    <span class="filter-label">Wann</span>')
-    parts.append('    <label for="w-all"       class="filter-chip filter-all">Alle Zeiten</label>')
-    parts.append('    <label for="w-this-week" class="filter-chip">Diese Woche</label>')
-    parts.append('    <label for="w-weekend"   class="filter-chip">Wochenende</label>')
-    parts.append('    <label for="w-next-week" class="filter-chip">Nächste Woche</label>')
+    parts.append('    <label for="w-all" class="filter-chip filter-all">Alle Zeiten</label>')
+    for slot, label in WHEN_OPTIONS:
+        parts.append(f'    <label for="w-{slot}" class="filter-chip">{html.escape(label)}</label>')
     parts.append('  </nav>')
     parts.append('  <nav class="filter-bar" aria-label="Kategorie filtern">')
     parts.append('    <span class="filter-label">Was</span>')
@@ -1362,31 +1410,8 @@ _PAGE_HEAD = """<!DOCTYPE html>
       color: white !important;
       border-color: #d63a3a !important;
     }}
-    /* Wann filter — hide rows whose data-when attribute doesn't include the
-       active token. Ongoing exhibitions get all three tags (this-week, weekend,
-       next-week) so they appear under any time filter. */
-    #w-this-week:checked ~ .agenda .row:not([data-when~="this-week"]),
-    #w-this-week:checked ~ .agenda .day:not(:has(.row[data-when~="this-week"]:not(.audience-kids):not(.audience-active))),
-    #w-this-week:checked ~ .agenda .week:not(:has(.row[data-when~="this-week"]:not(.audience-kids):not(.audience-active))),
-    #w-this-week:checked ~ .featured .featured-card:not([data-when~="this-week"]),
-    #w-this-week:checked ~ .featured:not(:has(.featured-card[data-when~="this-week"])) {{ display: none; }}
-    #w-weekend:checked ~ .agenda .row:not([data-when~="weekend"]),
-    #w-weekend:checked ~ .agenda .day:not(:has(.row[data-when~="weekend"]:not(.audience-kids):not(.audience-active))),
-    #w-weekend:checked ~ .agenda .week:not(:has(.row[data-when~="weekend"]:not(.audience-kids):not(.audience-active))),
-    #w-weekend:checked ~ .featured .featured-card:not([data-when~="weekend"]),
-    #w-weekend:checked ~ .featured:not(:has(.featured-card[data-when~="weekend"])) {{ display: none; }}
-    #w-next-week:checked ~ .agenda .row:not([data-when~="next-week"]),
-    #w-next-week:checked ~ .agenda .day:not(:has(.row[data-when~="next-week"]:not(.audience-kids):not(.audience-active))),
-    #w-next-week:checked ~ .agenda .week:not(:has(.row[data-when~="next-week"]:not(.audience-kids):not(.audience-active))),
-    #w-next-week:checked ~ .featured .featured-card:not([data-when~="next-week"]),
-    #w-next-week:checked ~ .featured:not(:has(.featured-card[data-when~="next-week"])) {{ display: none; }}
-    /* Wann chip-active states */
-    #w-all:checked       ~ .filter-bar .filter-chip[for="w-all"],
-    #w-this-week:checked ~ .filter-bar .filter-chip[for="w-this-week"],
-    #w-weekend:checked   ~ .filter-bar .filter-chip[for="w-weekend"],
-    #w-next-week:checked ~ .filter-bar .filter-chip[for="w-next-week"] {{
-      background: var(--ink); color: var(--bg); border-color: var(--ink);
-    }}
+    /* Wann filter — emitted dynamically per WHEN_OPTIONS slot */
+    {when_css}
     /* Favoriten filter — hide rows + cards + days/weeks without is-fav */
     #f-fav:checked ~ .agenda .row:not(.is-fav),
     #f-fav:checked ~ .agenda .day:not(:has(.row.is-fav)),
