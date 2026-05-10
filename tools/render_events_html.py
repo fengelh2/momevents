@@ -363,13 +363,24 @@ def _dt_attr(e, name) -> Optional[datetime]:
 
 def _group_by_week(events: list, now: datetime) -> list[tuple[str, list]]:
     """Bucket events by ISO week. Each bucket gets a human label like
-    'Diese Woche · 12.–18. Mai' or '15.–21. September'."""
+    'Diese Woche · 12.–18. Mai' or '15.–21. September'.
+
+    Ongoing exhibitions (start in the past, end in the future) are bucketed
+    into TODAY's week — otherwise NEUE WELTEN (started 2019) would land in a
+    historical 'Juni 2019' bucket. They sort to the top of this week's bucket
+    because their start dates are oldest.
+    """
     if not events:
         return []
+    this_year, this_week, _ = now.isocalendar()
     buckets: dict[tuple[int, int], list] = {}
     for e in events:
         s = _start(e)
-        iso_year, iso_week, _ = s.isocalendar()
+        en = _end(e)
+        if en is not None and en > now and s <= now:
+            iso_year, iso_week = this_year, this_week
+        else:
+            iso_year, iso_week, _ = s.isocalendar()
         buckets.setdefault((iso_year, iso_week), []).append(e)
 
     today = now.date()
@@ -404,13 +415,12 @@ def _relative_phrase(start: datetime, end: Optional[datetime], now: datetime) ->
     """Return a German countdown / duration phrase for the row.
 
     For single-day events:    'heute' / 'morgen' / 'in 3 Tagen' / 'in 2 Wochen'
-    For ongoing exhibitions:  'läuft noch 12 Tage' / 'läuft bis 18. August'
+    For ongoing exhibitions:  'noch N Tage' (the closing date already lives
+                              in the time column, so we don't repeat it here).
     """
     if end is not None and end > now and start <= now:
         days_left = (end.date() - now.date()).days
-        if days_left <= 14:
-            return f"läuft noch {days_left} {'Tag' if days_left == 1 else 'Tage'}"
-        return f"läuft bis {end.day}. {GERMAN_MONTHS[end.month - 1]}"
+        return f"noch {days_left} {'Tag' if days_left == 1 else 'Tage'}"
 
     days = (start.date() - now.date()).days
     if days < 0:
@@ -709,16 +719,28 @@ def _render_html(
         parts.append('    </div>')
         parts.append('  </section>')
 
-    # Weekly agenda — each week wrapped in .week for clean filter targeting
+    # Weekly agenda — each week wrapped in .week for clean filter targeting.
+    # Ongoing exhibitions inside a week bucket get a special "Aktuell zu sehen"
+    # day-block at the top, instead of being scattered under their original
+    # start dates (which are often years ago).
     parts.append('  <section class="agenda">')
     if not week_groups:
         parts.append('    <p class="empty">Keine Veranstaltungen gefunden.</p>')
     for week_label, evs in week_groups:
         parts.append('    <div class="week">')
         parts.append(f'      <h2 class="week-heading">{html.escape(week_label)}</h2>')
+        ongoing: list = []
         by_day: dict[date, list] = {}
         for e in evs:
-            by_day.setdefault(_start(e).date(), []).append(e)
+            s = _start(e)
+            en = _end(e)
+            if en is not None and en > now and s <= now:
+                ongoing.append(e)
+            else:
+                by_day.setdefault(s.date(), []).append(e)
+        if ongoing:
+            ongoing.sort(key=lambda x: (_end(x) or _start(x)))
+            parts.append(_render_ongoing_block(ongoing, now, featured))
         for d in sorted(by_day):
             parts.append(_render_day_block(d, by_day[d], now, featured))
         parts.append('    </div>')
@@ -887,6 +909,18 @@ def _render_day_block(d: date, evs: list, now: datetime, featured: set) -> str:
     rows = "\n".join(_render_row(e, now, featured) for e in evs)
     return f"""    <div class="day">
       <h3 class="day-heading">{html.escape(label)}</h3>
+      <div class="rows">
+{rows}
+      </div>
+    </div>"""
+
+
+def _render_ongoing_block(evs: list, now: datetime, featured: set) -> str:
+    """Render ongoing exhibitions under a 'Aktuell zu sehen' heading at the top
+    of their containing week. Avoids the per-day stretching of multi-month shows."""
+    rows = "\n".join(_render_row(e, now, featured) for e in evs)
+    return f"""    <div class="day day-ongoing">
+      <h3 class="day-heading">Aktuell zu sehen</h3>
       <div class="rows">
 {rows}
       </div>
