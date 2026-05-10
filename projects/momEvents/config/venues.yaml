@@ -647,6 +647,106 @@
     production for Ruhrfestspiele 2026.
 
 # ============================================================================
+# MÜNSTER
+# ============================================================================
+
+- id: lwl-museum-kunst-kultur
+  name: LWL-Museum für Kunst und Kultur
+  city: Münster
+  category: museum_exhibition
+  homepage: https://www.lwl-museum-kunst-kultur.de
+  calendar_url: https://www.lwl-museum-kunst-kultur.de/de/touren-workshops/termine-und-veranstaltungen/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: ".event-element"
+    title: ".event-title"
+    date: ".event-date"
+    detail_link: "a.btn-link"
+  date_extract_regex: '\d{1,2}\.\d{1,2}\.\d{4}'
+  skip_if_title_matches:
+    - "(?i)Kindergeburtstag"
+    - "(?i)Zwei- bis"
+    - "(?i)Drei- bis"
+    - "(?i)Vier- bis"
+    - "(?i)Fünf- bis"
+  notes: |
+    Major regional art museum (Westphalian Museum). Clean .event-element cards
+    with full date in .event-date ("Sonntag, 10.5.2026"). ~19 events visible.
+    Kids/family events filtered via skip_if_title_matches.
+
+- id: hot-jazz-club-muenster
+  name: Hot Jazz Club Münster
+  city: Münster
+  category: concert
+  homepage: https://www.hotjazzclub.de
+  calendar_url: https://www.hotjazzclub.de/?ical=1
+  kind: ical
+  source_priority: 0
+  notes: |
+    WordPress + Tribe Events; single .ics endpoint serves the whole calendar.
+    No ical_pattern needed — calendar_url IS the .ics URL. ~70% jazz/swing/
+    big-band; rest is indie/world/comedy.
+
+- id: musikhochschule-muenster
+  name: Musikhochschule Münster
+  city: Münster
+  category: concert
+  homepage: https://www.uni-muenster.de/Musikhochschule/
+  calendar_url: https://www.uni-muenster.de/Musikhochschule/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.h-event"
+    title: "span.summary"
+    date: "time@datetime"
+    detail_link: "a.p-url"
+    description: "span.description"
+  notes: |
+    h-event microformat with ISO datetime — cleanest selectors of any venue.
+    Student/faculty concerts incl. Vortragsabende. No skip filter (mum may
+    enjoy student recitals).
+
+- id: dommusik-muenster
+  name: Dommusik St.-Paulus-Dom Münster
+  city: Münster
+  category: concert
+  homepage: https://www.paulusdom.de
+  calendar_url: https://dommusik.paulusdom.de/konzerte
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "div.event"
+    title: "div.event h2, div.event h3"
+    date: "div.datecol"
+    detail_link: "div.event a"
+  date_extract_regex: '\d{1,2}\.?\s+(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z.]*'
+  notes: |
+    Cathedral music programme: Orgelkonzerte, Oratorien, MUSICA SACRA festival.
+    Date split across nested divs (wday + day + month abbrev); regex extracts
+    "DD Mai" pattern from combined .datecol text. Year inferred from
+    PREFER_DATES_FROM=future. Sub-domain dommusik.paulusdom.de (not www).
+
+- id: kunsthalle-muenster
+  name: Kunsthalle Münster
+  city: Münster
+  category: museum_exhibition
+  homepage: https://www.kunsthallemuenster.de
+  calendar_url: https://www.kunsthallemuenster.de/de/programm/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "a.programArchiveTableItem"
+    title: ".tableTitle"
+    date: "@data-date"
+    detail_link: "@href"
+  notes: |
+    Contemporary art venue. ~284 archive entries in same listing — filtered
+    by render's future-horizon. data-date attribute is ISO YYYY-MM-DD on the
+    item element itself; uses our @attr-on-item selector syntax.
+    NOTE: domain is kunsthallemuenster.de (no hyphen).
+
+# ============================================================================
 # DUISBURG
 # ============================================================================
 

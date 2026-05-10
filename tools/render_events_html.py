@@ -527,23 +527,18 @@ def _render_html(
     cities = sorted(city_counts.items(), key=lambda kv: (-kv[1][1], kv[1][0]))
     # cities = [(slug, (display_name, count)), ...]
 
-    # Build per-chip CSS rules — hide rows/cards for ALL venue_ids the chip
-    # controls when its checkbox is unchecked; fade the chip itself.
+    # Per-chip "is checked" visual state (for the chip itself). Filtering of
+    # the actual rows is JS-driven (see inline script): on chip change, JS
+    # collects checked venue_ids and tags non-matching rows with .venue-hidden.
     venue_css_rules = []
     for cid in sorted(chips_meta):
-        venue_ids = chips_meta[cid]
-        sels = []
-        for vid in sorted(venue_ids):
-            sels.append(f'#v-{cid}:not(:checked) ~ .agenda [data-venue="{vid}"]')
-            sels.append(f'#v-{cid}:not(:checked) ~ .featured [data-venue="{vid}"]')
-        venue_css_rules.append(", ".join(sels) + " { display: none !important; }")
         venue_css_rules.append(
-            f'#v-{cid}:not(:checked) ~ .venue-chips .venue-chip[for="v-{cid}"] '
-            f'{{ opacity: 0.45; }}'
+            f'#v-{cid}:checked ~ .venue-chips .venue-chip[for="v-{cid}"] '
+            f'{{ background: var(--ink); color: var(--bg); border-color: var(--ink); }}'
         )
         venue_css_rules.append(
-            f'#v-{cid}:not(:checked) ~ .venue-chips .venue-chip[for="v-{cid}"] .venue-checkbox '
-            f'{{ background: transparent; border: 1px solid var(--rule); }}'
+            f'#v-{cid}:checked ~ .venue-chips .venue-chip[for="v-{cid}"] .venue-checkbox '
+            f'{{ background: var(--bg); border: 1px solid var(--bg); }}'
         )
     venue_css = "\n    ".join(venue_css_rules)
 
@@ -642,15 +637,20 @@ def _render_html(
     parts.append('  <input type="radio" name="whenfilter" id="w-all" class="filter-input" checked>')
     for slot, _label in WHEN_OPTIONS:
         parts.append(f'  <input type="radio" name="whenfilter" id="w-{slot}" class="filter-input">')
-    # Per-chip checkboxes — default checked. Unticking hides those rows.
+    # Per-chip checkboxes — default UNchecked. Click-to-add interaction:
+    # when zero chips checked, all venues visible; when 1+ checked, only those.
+    # Filtering logic lives in inline JS at bottom (sets .venue-hidden class).
     for cid in sorted(chips_meta):
-        parts.append(f'  <input type="checkbox" id="v-{cid}" class="filter-input" checked>')
+        parts.append(f'  <input type="checkbox" id="v-{cid}" class="filter-input">')
 
     # Header
     parts.append('  <header class="masthead">')
     parts.append(f'    <h1>{html.escape(title)}</h1>')
     parts.append(f'    <p class="subtitle">Diese Wochen · Stand {html.escape(subtitle)}, {now.strftime("%H:%M")}</p>')
     parts.append('  </header>')
+
+    # All filters wrapped in one panel for visual rhythm
+    parts.append('  <div class="filter-panel">')
 
     # Search box — type to filter the agenda by free text (title, venue, city)
     parts.append('  <div class="search-row">')
@@ -661,7 +661,7 @@ def _render_html(
 
     # Filter bars — Wo (city) first, then Was (category). When a specific city
     # is picked, a third row of venue chips appears below allowing per-venue
-    # opt-out within that city.
+    # opt-in within that city.
     parts.append('  <nav class="filter-bar filter-bar-city" aria-label="Stadt filtern">')
     parts.append('    <span class="filter-label">Wo</span>')
     parts.append('    <label for="c-all" class="filter-chip filter-all">Alle Städte</label>')
@@ -714,6 +714,7 @@ def _render_html(
                  'Auch Kurse, Workshops und Familien&shy;programm zeigen'
                  '</label>')
     parts.append('  </div>')
+    parts.append('  </div>')  # close .filter-panel
 
     # Featured / "Nicht verpassen"
     if feat_events:
@@ -766,14 +767,37 @@ def _render_html(
     # All persistence via localStorage. Degrades gracefully if JS is disabled —
     # filter chips still work (CSS), the page is still readable, just no
     # favoriting and no "Neu since last visit" badges.
+    # JS: serialize the chip→venue_ids map so the venue-filter logic knows which
+    # rows each chip controls (a chip can control multiple venue_ids in the
+    # multi-source-merged-venue case, e.g. Kunstpalast + Kunstpalast-current).
+    import json as _json
+    chip_map_json = _json.dumps({cid: sorted(vids) for cid, vids in chips_meta.items()})
     parts.append('<script>')
     parts.append('(function(){')
-    parts.append('  // "Alle" venue toggle')
+    parts.append(f'  var chipMap={chip_map_json};')
+    parts.append('  // Apply venue filter: tag non-matching rows with .venue-hidden.')
+    parts.append('  // When NO chips checked, no filter applied (everything visible).')
+    parts.append('  function applyVenueFilter(){')
+    parts.append('    var checked=Object.create(null);')
+    parts.append('    document.querySelectorAll(\'input.filter-input[id^="v-"]:checked\').forEach(function(c){')
+    parts.append('      var cid=c.id.slice(2);')
+    parts.append('      (chipMap[cid]||[]).forEach(function(v){checked[v]=true;});')
+    parts.append('    });')
+    parts.append('    var anyChecked=Object.keys(checked).length>0;')
+    parts.append('    document.querySelectorAll("a.row[data-venue], a.featured-card[data-venue]").forEach(function(el){')
+    parts.append('      var vid=el.getAttribute("data-venue");')
+    parts.append('      if(!anyChecked||checked[vid]) el.classList.remove("venue-hidden");')
+    parts.append('      else el.classList.add("venue-hidden");')
+    parts.append('    });')
+    parts.append('  }')
+    parts.append('  document.querySelectorAll(\'input.filter-input[id^="v-"]\').forEach(function(c){')
+    parts.append('    c.addEventListener("change",applyVenueFilter);')
+    parts.append('  });')
+    parts.append('  // "Alle" button = clear venue selection (uncheck all chips, show everything).')
     parts.append('  document.querySelectorAll(".venue-chip-all").forEach(function(b){')
     parts.append('    b.addEventListener("click",function(){')
-    parts.append('      var inputs=document.querySelectorAll(\'input.filter-input[id^="v-"]\');')
-    parts.append('      var allOn=Array.prototype.every.call(inputs,function(c){return c.checked;});')
-    parts.append('      Array.prototype.forEach.call(inputs,function(c){c.checked=!allOn;});')
+    parts.append('      document.querySelectorAll(\'input.filter-input[id^="v-"]\').forEach(function(c){c.checked=false;});')
+    parts.append('      applyVenueFilter();')
     parts.append('    });')
     parts.append('  });')
     parts.append('  // Favorites + NEU badges (state in localStorage)')
@@ -1071,8 +1095,19 @@ _PAGE_HEAD = """<!DOCTYPE html>
       margin: 0;
       letter-spacing: 0.02em;
     }}
-    /* Search box — sits above filters, debounced via JS to filter agenda */
-    .search-row {{ margin: 0 0 14px; }}
+    /* Filter panel — wraps Wo/Was/Wann/Häuser/search in one calm container */
+    .filter-panel {{
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+      padding: 16px 18px 14px;
+      margin: 0 0 32px;
+    }}
+    @media (prefers-color-scheme: dark) {{
+      .filter-panel {{ background: rgba(255,255,255,0.02); }}
+    }}
+    /* Search box — sits at top of filter panel, debounced via JS */
+    .search-row {{ margin: 0 0 12px; }}
     .search-input {{
       width: 100%;
       box-sizing: border-box;
@@ -1098,31 +1133,30 @@ _PAGE_HEAD = """<!DOCTYPE html>
     body.has-search-query .agenda .week:not(:has(a.row.search-match)),
     body.has-search-query .featured .featured-card:not(.search-match),
     body.has-search-query .featured:not(:has(.featured-card.search-match)) {{ display: none; }}
-    /* Filter bar — Wo / Was / Häuser share consistent spacing & chip styles */
+    /* Filter bar — Wo / Was / Wann / Häuser share consistent spacing & chip styles */
     .filter-input {{ position: absolute; opacity: 0; pointer-events: none; }}
     .filter-bar,
     .venue-chips {{
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 6px;
-      margin: 0 0 10px;
+      gap: 5px;
+      margin: 0 0 8px;
     }}
-    /* "Auch Kurse..." toggle — hidden per user feedback. Underlying audience
-       filter (kids/active hidden) still applies; bring this back by removing
-       display:none if mum ever wants the toggle visible. */
+    .filter-bar:last-child {{ margin-bottom: 0; }}
+    /* "Auch Kurse..." toggle hidden; underlying audience filter still applies */
     .extras-toggle-wrapper {{ display: none; }}
     /* Spacer that grows to fill remaining width — pushes Favoriten chip right. */
     .filter-bar-spacer {{ flex: 1; min-width: 12px; }}
     .filter-chip-fav .cat-icon {{ font-size: 11px; }}
     .filter-label {{
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.16em;
       color: var(--muted);
-      margin-right: 8px;
-      min-width: 36px;
+      margin-right: 6px;
+      min-width: 32px;
     }}
     /* Single base style for ALL chips (filter-chip, venue-chip, venue-chip-all) */
     .filter-chip,
@@ -1130,25 +1164,25 @@ _PAGE_HEAD = """<!DOCTYPE html>
     .venue-chip-all {{
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 5px 11px;
+      gap: 5px;
+      padding: 4px 10px;
       border-radius: 999px;
       border: 1px solid var(--rule);
-      background: var(--paper);
+      background: var(--bg);
       font: inherit;
-      font-size: 12.5px;
+      font-size: 12px;
       font-weight: 500;
       letter-spacing: 0.01em;
       color: var(--ink);
       cursor: pointer;
       user-select: none;
-      transition: background 100ms ease, border-color 100ms ease, color 100ms ease, opacity 100ms ease;
-      line-height: 1.2;
+      transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
+      line-height: 1.25;
     }}
     .filter-chip:hover,
     .venue-chip:hover,
     .venue-chip-all:hover {{ background: var(--hover); }}
-    .cat-icon {{ font-size: 12px; }}
+    .cat-icon {{ font-size: 11px; }}
     /* Active state — highlight the chip whose radio is checked.
        (Per-city chip-active rules emitted dynamically in the city_css block.) */
     #f-all:checked      ~ .filter-bar .filter-chip[for="f-all"],
@@ -1520,11 +1554,15 @@ _PAGE_HEAD = """<!DOCTYPE html>
       width: 10px;
       height: 10px;
       border-radius: 2px;
-      background: var(--ink);
+      background: transparent;
+      border: 1px solid var(--rule);
       flex-shrink: 0;
-      transition: background 100ms ease;
+      box-sizing: border-box;
+      transition: background 100ms ease, border-color 100ms ease;
     }}
-    /* Per-venue hide + chip-fade rules emitted dynamically below */
+    /* JS sets .venue-hidden on rows/cards whose venue isn't in the active selection */
+    .venue-hidden {{ display: none !important; }}
+    /* Per-chip "is checked" visual styles emitted dynamically below */
     {venue_css}
     /* Extras toggle styling */
     .extras-toggle-wrapper {{

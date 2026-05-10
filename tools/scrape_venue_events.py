@@ -157,8 +157,14 @@ def _coerce_to_dt(v) -> Optional[datetime]:
 
 def _scrape_ical(venue_row: dict, session=None) -> list[Event]:
     listing = venue_row["calendar_url"]
-    pattern = venue_row["ical_pattern"]
-    ics_urls = parse_ical.discover_ics_urls(listing, pattern, session=session)
+    pattern = venue_row.get("ical_pattern")
+    # If no pattern is configured, treat calendar_url as a single .ics endpoint
+    # (used by venues that publish ONE .ics with all events, e.g. Tribe Events
+    # WordPress sites with `?ical=1` query). Skips the discovery step.
+    if not pattern:
+        ics_urls = [listing]
+    else:
+        ics_urls = parse_ical.discover_ics_urls(listing, pattern, session=session)
 
     # Build id → detail-URL map from the listing if a detail_pattern is configured.
     # This is how TUP Essen exposes its real event pages (the .ics URL points only
@@ -502,8 +508,21 @@ def _select_text(node, selector: Optional[str], separator: str = " ") -> str:
 
 
 def _select_attr(node, selector: Optional[str], attr: str) -> str:
+    """Read an attribute from a CSS-selected element.
+
+    Supports the same `@attr` and `@attr-on-item` shortcuts as _select_text:
+        - "h2 a"          → select h2 a, read attr `attr`
+        - "h2 a@href"     → select h2 a, read attr `href` (overrides default)
+        - "@href"         → read attr `href` from the item element itself
+    """
     if not selector:
         return ""
+    if selector.startswith("@"):
+        return (node.get(selector[1:].strip()) or "").strip()
+    if "@" in selector:
+        sel, override_attr = selector.rsplit("@", 1)
+        el = node.select_one(sel.strip())
+        return (el.get(override_attr.strip()) or "").strip() if el is not None else ""
     el = node.select_one(selector)
     if el is None:
         return ""
