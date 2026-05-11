@@ -994,15 +994,130 @@ def _parse_one(text: str, explicit_format: Optional[str] = None) -> Optional[dat
 _CATEGORY_KEYWORDS = [
     ("vernissage", ["vernissage", "ausstellungseröffnung", "eröffnung"]),
     # Note: bare "oper" deliberately excluded — too many false positives
-    # ("Cooper", "Hopper", "Kooperation"). Real operas reach this category via
-    # stage_resolver (Aalto, Opernhaus → default_category: opera) or via the
-    # featured highlights keyword list.
-    ("opera", ["opera", "operette"]),
-    ("ballet", ["ballett", "tanztheater", "schwanensee", "nussknacker", "tanz"]),
-    ("concert", ["sinfonie", "konzert", "orchester", "philharmonisch", "kammermusik", "rezital", "liederabend"]),
+    # ("Cooper", "Hopper", "Kooperation"). Real operas reach this category via:
+    #  (a) stage_resolver default_category=opera (Aalto, Opernhaus Düsseldorf, etc.)
+    #  (b) one of the rep production-name keywords below (word-boundary matched
+    #      to avoid substring traps like "Aida" inside other words)
+    #  (c) the featured highlights keyword list.
+    # Backported + extended from events-la list 2026-05-11.
+    ("opera", [
+        "opera", "operette",
+        # Verdi
+        "falstaff", "aida", "rigoletto", "otello", "la traviata", "la traviata",
+        "il trovatore", "nabucco", "don carlos", "macbeth", "simon boccanegra",
+        "un ballo in maschera", "la forza del destino",
+        # Puccini
+        "tosca", "la bohème", "la boheme", "madama butterfly", "turandot",
+        "gianni schicchi", "manon lescaut", "suor angelica", "il tabarro",
+        # Mozart
+        "magic flute", "zauberflöte", "zauberfloete",
+        "don giovanni", "cosi fan tutte", "così fan tutte",
+        "marriage of figaro", "le nozze di figaro", "le nozze",
+        "die hochzeit des figaro",
+        "idomeneo", "la clemenza di tito",
+        "entführung aus dem serail", "entfuehrung aus dem serail",
+        # Wagner — full Ring cycle + others
+        "die walküre", "die walkuere", "rheingold", "siegfried",
+        "götterdämmerung", "goetterdaemmerung", "ring des nibelungen",
+        "tannhäuser", "tannhaeuser", "lohengrin", "parsifal",
+        "tristan und isolde", "fliegender holländer", "fliegender hollaender",
+        "die meistersinger",
+        # R. Strauss
+        "der rosenkavalier", "rosenkavalier", "salome", "elektra",
+        "ariadne auf naxos", "capriccio", "arabella",
+        "die frau ohne schatten",
+        # J. Strauss / Lehár (operettas — explicit; "operette" alone catches generic)
+        "die fledermaus", "fledermaus", "eine nacht in venedig",
+        "der zigeunerbaron", "wiener blut",
+        "lustige witwe", "land des lächelns", "land des laechelns",
+        # Beethoven / Weber / Humperdinck
+        "fidelio", "der freischütz", "freischuetz",
+        "hänsel und gretel", "haensel und gretel", "königskinder", "koenigskinder",
+        # Bizet / Rossini / Donizetti / Bellini
+        "carmen", "les pêcheurs", "les pecheurs de perles",
+        "barbiere di siviglia", "barber of seville",
+        "elisir d'amore", "elixir of love", "lucia di lammermoor",
+        "don pasquale", "fille du régiment", "fille du regiment",
+        "norma",
+        # Tchaikovsky / Mussorgsky / Borodin
+        "eugen onegin", "eugene onegin", "jewgeni onegin",
+        "pikowaja", "pique dame", "pikowaja dama",
+        "boris godunov", "fürst igor", "fuerst igor", "prince igor",
+        # Massenet / Gounod / Offenbach
+        "werther", "manon",
+        "faust",  # Gounod opera; ambiguous with Goethe play but most "Faust" events at opera houses ARE the opera
+        "contes d'hoffmann", "hoffmanns erzählungen", "hoffmanns erzaehlungen",
+        "orpheus in der unterwelt", "orphée aux enfers",
+        "schöne helena", "schoene helena", "belle hélène", "belle helene",
+        # Janáček / Berg / Britten / Bartók
+        "jenufa", "jenůfa", "katja kabanowa", "káťa kabanová",
+        "sache makropulos", "makropulos",
+        "wozzeck", "lulu",
+        "peter grimes", "billy budd", "death in venice", "tod in venedig",
+        "midsummer night's dream",  # Britten opera (Shakespeare play also exists; rare conflict)
+        "herzog blaubarts burg", "bluebeard",
+        # Misc rep
+        "die verkaufte braut", "verkaufte braut", "bartered bride",
+        "rake's progress", "rakes progress",
+        "cavalleria rusticana", "pagliacci",
+    ]),
+    ("ballet", [
+        "ballett", "ballet", "tanztheater",
+        "schwanensee", "swan lake",
+        "nussknacker", "nutcracker",
+        "dornröschen", "dornroeschen", "sleeping beauty",
+        "giselle", "coppelia", "coppélia",
+        "don quixote", "don quichotte",
+        "la bayadère", "la bayadere",
+        "la sylphide",
+        "spartacus", "spartakus",
+        "raymonda", "sylvia",
+        "le sacre du printemps", "frühlingsopfer", "fruehlingsopfer", "rite of spring",
+        "petrushka", "petruschka",
+        "feuervogel", "firebird",
+        "daphnis und chloé", "daphnis und chloe", "daphnis et chloé",
+        "boléro", "bolero",
+        "tanz", "tanzhommage",  # last-resort markers
+    ]),
+    ("concert", ["sinfonie", "symphonie", "konzert", "orchester", "philharmonisch",
+                  "kammermusik", "rezital", "liederabend", "chormusik", "chor "]),
     ("theatre", ["premiere", "schauspiel", "aufführung", "vorstellung"]),
     ("museum_exhibition", ["ausstellung", "exhibition"]),
 ]
+
+
+# German + English musicals — title may LITERALLY contain "Oper" or other
+# opera-keyword bait, but they're musical theatre. Tag as theatre.
+_MUSICAL_THEATRE_TITLES = (
+    "phantom der oper", "phantom of the opera",
+    "les misérables", "les miserables",
+    "miss saigon",
+    "evita",
+    "jesus christ superstar",
+    "tanz der vampire",
+    "elisabeth",  # Wiener musical (not the Donizetti opera; check context)
+    "rebecca",  # musical
+    "der könig der löwen", "the lion king",
+    "wicked",
+    "hamilton",
+    "hadestown",
+    "cabaret",
+    "chicago",
+    "rent",
+    "into the woods",
+    "sweeney todd",
+    "starlight express",
+    "anatevka", "fiddler on the roof",
+    "linie 1",
+    "tabaluga",
+    "ich war noch niemals in new york",
+    "mamma mia",
+    "der glöckner von notre dame",
+    "die schöne und das biest", "beauty and the beast",
+    "tarzan",
+    "rocky horror",
+    "we will rock you",
+)
 
 
 # ─── audience inference ──────────────────────────────────────────────────────
@@ -1082,19 +1197,33 @@ def _infer_category(title: str, venue_row: dict, stage_default: Optional[str] = 
 
     1. per-venue category_keyword_overrides — venue-curated, beats global keywords
        (used for production-name overrides like Aalto's "Relations" / "Ptah VI" being ballet)
-    2. global title keyword match (Mozart/Sinfonie/Schwanensee/etc.)
-    3. stage_default from stage_resolver rule
-    4. venue's base category if not 'mixed'
-    5. 'other'
+    2. famous-musical override (Phantom der Oper / Tanz der Vampire / etc. → theatre,
+       not opera/ballet, even though their titles literally contain those words)
+    3. global title keyword match (word-boundary on short opera/ballet tokens
+       to prevent "Aida" matching inside "Saida" or "tanz" matching inside
+       "Akzeptanz" etc.)
+    4. stage_default from stage_resolver rule
+    5. venue's base category if not 'mixed'
+    6. 'other'
     """
     t = title.lower()
     overrides = venue_row.get("category_keyword_overrides") or {}
     for cat, kws in overrides.items():
         if any(kw.lower() in t for kw in (kws or [])):
             return cat
+    # 2. Famous musicals deny — title-contains check that beats opera/ballet.
+    if any(m in t for m in _MUSICAL_THEATRE_TITLES):
+        return "theatre"
+    # 3. Title keyword match. For opera/ballet tokens, require word-boundary
+    # match — otherwise short keywords ("aida", "tanz") false-positive inside
+    # longer German words.
     for cat, kws in _CATEGORY_KEYWORDS:
-        if any(kw in t for kw in kws):
-            return cat
+        for kw in kws:
+            if cat in ("opera", "ballet") and " " not in kw:
+                if re.search(rf"\b{re.escape(kw)}\b", t):
+                    return cat
+            elif kw in t:
+                return cat
     if stage_default:
         return stage_default
     base = (venue_row.get("category") or "").lower()
