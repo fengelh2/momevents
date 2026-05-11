@@ -452,16 +452,26 @@
 # ============================================================================
 
 - id: kunstsammlung-nrw
-  name: Kunstsammlung NRW (K20 + K21)
+  name: Kunstsammlung NRW (K20 / K21)
   city: Düsseldorf
   category: museum_exhibition
   homepage: https://www.kunstsammlung.de
-  calendar_url: https://www.kunstsammlung.de/de/ausstellungen
-  kind: unknown
+  calendar_url: https://www.kunstsammlung.de/programm
+  kind: html_list
   source_priority: 0
-  produces_venue_ids:
-    - k20-duesseldorf
-    - k21-duesseldorf
+  selectors:
+    item: "section.calendar .card"
+    title: ".event a"
+    date: ".card-header"
+    detail_link: ".event a@href"
+  date_extract_regex: '\d{1,2}\.\d{1,2}\.'
+  notes: |
+    K20 + K21 — the two Kunstsammlung NRW museums in Düsseldorf
+    (Ständehausstraße / Grabbeplatz). ~98 entries on /programm in
+    accordion cards grouped by date. .card-header text starts with
+    "MI 13.5. 17 – 18 Uhr ..."; regex grabs "13.5." (German short
+    DD.M.); dateparser with DATE_ORDER=DMY infers the current year.
+    Onboarded 2026-05-11 (was previously placeholder kind=unknown).
 
 - id: kunstpalast
   name: Kunstpalast
