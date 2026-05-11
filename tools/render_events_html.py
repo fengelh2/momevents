@@ -705,7 +705,7 @@ def _render_html(
         )
         parts.append(f'    <p class="masthead__eyebrow">{eb_html}</p>')
     parts.append(f'    <h1 class="masthead__main">{html.escape(title)}</h1>')
-    parts.append(f'    <p class="subtitle">Diese Wochen · Stand {html.escape(subtitle)}, {now.strftime("%H:%M")}</p>')
+    parts.append(f'    <p class="subtitle">Stand {html.escape(subtitle)}, {now.strftime("%H:%M")}</p>')
     parts.append('  </header>')
 
     # All filters wrapped in one panel for visual rhythm
@@ -1148,16 +1148,17 @@ _PAGE_HEAD = """<!DOCTYPE html>
       border-bottom: 1px solid var(--rule);
       margin-bottom: 24px;
     }}
-    /* Eyebrow line: tiny caps, letter-spaced, muted. Sits above the main
-       title like a topic tag ("KULTUR IN DER 'GRÜNEN LUNGE'"). */
+    /* Eyebrow / main / subtitle stack — three lines, tight unified rhythm.
+       Each line: 0 margin top, 4px margin bottom, matching line-height so
+       the optical gap is dominated by the explicit margin (not by leading). */
     .masthead__eyebrow {{
       color: var(--muted);
       font-size: 11px;
       font-weight: 600;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      margin: 0 0 10px;
-      line-height: 1.3;
+      margin: 0 0 4px;
+      line-height: 1.2;
     }}
     /* "Grünen Lunge" accent — soft Essen-park green so it reads like a
        theme tint without screaming for attention. */
@@ -1170,14 +1171,15 @@ _PAGE_HEAD = """<!DOCTYPE html>
       font-size: 36px;
       font-weight: 700;
       letter-spacing: -0.02em;
-      margin: 0 0 6px;
-      line-height: 1.15;
+      margin: 0 0 4px;
+      line-height: 1.2;
     }}
     .masthead .subtitle {{
       color: var(--muted);
       font-size: 14px;
       margin: 0;
       letter-spacing: 0.02em;
+      line-height: 1.2;
     }}
     /* Filter panel — wraps Wo/Was/Wann/Häuser/search in one calm container */
     .filter-panel {{
