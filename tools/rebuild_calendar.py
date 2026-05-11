@@ -125,6 +125,11 @@ def main() -> int:
     except Exception as exc:
         log.warning("chip audit failed: %s", exc)
 
+    # Freshness check — warn if any configured venue produced 0 events. Most
+    # often signals a broken scraper (site redesign, selectors stale, network
+    # transient). Stays in the run log so failures don't slip past silently.
+    _emit_freshness_warnings(venues, venue_events=_per_venue_counts(all_events))
+
     # Summary report
     print()
     print(f"Run {datetime.now(timezone.utc).isoformat(timespec='seconds')} — "
@@ -156,6 +161,48 @@ def _load_highlights(path: str) -> dict:
         "featured_keywords": data.get("featured_keywords") or [],
         "featured_events": data.get("featured_events") or [],
     }
+
+
+def _per_venue_counts(events: list) -> dict:
+    """Return {venue_id (source): n_events} — keyed by `source` (the row that
+    scraped it) not `venue_id` (which can be split by aggregator)."""
+    from collections import Counter as _C
+    c = _C()
+    for e in events:
+        src = getattr(e, "source", None) or (e.get("source") if isinstance(e, dict) else None) or ""
+        if src:
+            c[src] += 1
+    return dict(c)
+
+
+def _emit_freshness_warnings(venues: list, venue_events: dict) -> None:
+    """Warn on stderr/log when a configured venue scraped 0 events.
+
+    Most failures here mean: site selector changed, source moved, transient
+    network blip. Doesn't fail the build — just makes the silence audible.
+    Static venues and known-thin venues (single static_events with 1 show)
+    are exempt from the warning.
+    """
+    silent: list[tuple[str, str]] = []
+    for v in venues:
+        vid = v.get("id")
+        kind = v.get("kind", "unknown")
+        if not vid or kind == "unknown":
+            continue
+        # Static venues are intentionally hardcoded; not subject to scrape drift.
+        if kind == "static":
+            continue
+        n = int(venue_events.get(vid, 0))
+        if n == 0:
+            silent.append((vid, kind))
+    if silent:
+        log.warning(
+            "FRESHNESS: %d venue(s) returned 0 events — possible scraper drift: %s",
+            len(silent),
+            ", ".join(f"{vid}({kind})" for vid, kind in silent),
+        )
+    else:
+        log.info("FRESHNESS: all configured venues returned ≥1 event")
 
 
 def _emit_chip_audit(events: list, venue_meta: dict, out_path: Path) -> None:
