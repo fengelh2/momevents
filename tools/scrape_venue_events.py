@@ -83,6 +83,8 @@ def scrape(venue_row: dict, session: Optional[requests.Session] = None) -> list[
             events = _scrape_detail_pages(venue_row, session=session)
         elif kind == "static":
             events = _scrape_static(venue_row)
+        elif kind == "tribe_rest":
+            events = _scrape_tribe_rest(venue_row, session=session)
         elif kind == "unknown":
             log.info("skip %s: kind=unknown (pending onboarding)", venue_id)
             return []
@@ -176,6 +178,212 @@ def _scrape_detail_pages(venue_row: dict, session=None) -> list[Event]:
             )
         )
     return out
+
+
+# ─── Tribe Events REST API path ─────────────────────────────────────────────
+# WordPress + The Events Calendar (Tribe) plugin exposes a JSON API at
+# /wp-json/tribe/events/v1/events. Used by Unna's central kultur-in-unna.de
+# portal (388 events across 15+ venues — Hellweg-Museum, Stadthalle, ZIL,
+# Bibliothek, etc.) and Lindenbrauerei's WordPress site.
+# Backported from events-la 2026-05-11; adds split_by_venue mode so a
+# multi-venue aggregator can fan out into separate venue_ids/chips.
+
+import html as _html
+
+# Marketing-ribbon suffixes Tribe sites bake into titles via <span> wrappers.
+_TITLE_RIBBONS = re.compile(
+    r"\s*(?:SELLING\s+FAST|SOLD\s+OUT|FEW\s+TICKETS\s+LEFT|"
+    r"ON\s+SALE\s+NOW|JUST\s+ANNOUNCED|FINAL\s+WEEK|EXTENDED|NEW\s+DATE|"
+    r"AUSVERKAUFT|RESTKARTEN)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _scrape_tribe_rest(venue_row: dict, session=None) -> list[Event]:
+    """Walk a Tribe Events REST API, paginating until exhausted.
+
+    Config:
+      calendar_url: REST endpoint (typically `.../wp-json/tribe/events/v1/events?per_page=100`)
+      filter_venue_substring: optional — keep events whose `venue.venue` contains this string
+      split_by_venue: bool — when true, generate venue_id per event from a
+        slugified venue.venue field (so a multi-venue aggregator fans out
+        into separate chips, e.g. Hellweg-Museum vs Stadthalle Unna).
+      venue_id_overrides: optional {tribe_venue_name: canonical_venue_id}
+        for split_by_venue mode (lets aggregator events fold under the
+        existing venue_id of a separately-onboarded venue).
+      skip_venue_substrings: optional list of substrings; drop events whose
+        venue.venue contains any of them (filter out community/private rooms).
+      max_pages: safety cap (default 30)
+    """
+    sess = session or requests
+    base_url = venue_row["calendar_url"]
+    sep = "&" if "?" in base_url else "?"
+    if "per_page=" not in base_url:
+        base_url = f"{base_url}{sep}per_page=100"
+        sep = "&"
+
+    venue_filter = venue_row.get("filter_venue_substring")
+    split_by_venue = bool(venue_row.get("split_by_venue", False))
+    vid_overrides = venue_row.get("venue_id_overrides") or {}
+    skip_substrings = [s.lower() for s in (venue_row.get("skip_venue_substrings") or [])]
+    max_pages = int(venue_row.get("max_pages", 30))
+    out: list[Event] = []
+    seen_urls: set[str] = set()
+
+    for page in range(1, max_pages + 1):
+        page_url = f"{base_url}{sep}page={page}"
+        try:
+            r = sess.get(page_url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            r.raise_for_status()
+            data = r.json()
+        except (requests.RequestException, ValueError) as exc:
+            log.warning("%s: tribe_rest fetch failed page=%d: %s", venue_row["id"], page, exc)
+            break
+        events = data.get("events") or []
+        if not events:
+            break
+        for raw in events:
+            ev = _tribe_to_event(
+                raw, venue_row,
+                venue_filter=venue_filter,
+                split_by_venue=split_by_venue,
+                vid_overrides=vid_overrides,
+                skip_substrings=skip_substrings,
+            )
+            if ev is None:
+                continue
+            key = (ev.venue_id, ev.url)
+            if key in seen_urls:
+                continue
+            seen_urls.add(key)
+            out.append(ev)
+        if page >= int(data.get("total_pages") or 1):
+            break
+
+    log.info("%s: %d events from tribe_rest", venue_row["id"], len(out))
+    return out
+
+
+def _tribe_to_event(
+    raw: dict, venue_row: dict,
+    venue_filter: str | None = None,
+    split_by_venue: bool = False,
+    vid_overrides: dict | None = None,
+    skip_substrings: list[str] | None = None,
+) -> Optional[Event]:
+    """Map one Tribe REST record to a canonical Event."""
+    title = raw.get("title") or ""
+    if not title:
+        return None
+    title = _clean_title(_tribe_html_decode(title))
+    if not title:
+        return None
+
+    # Extract Tribe's venue object (a dict or list of dicts).
+    venue_obj = raw.get("venue")
+    if isinstance(venue_obj, dict):
+        tribe_vname = venue_obj.get("venue") or ""
+    elif isinstance(venue_obj, list) and venue_obj and isinstance(venue_obj[0], dict):
+        tribe_vname = venue_obj[0].get("venue", "")
+    else:
+        tribe_vname = ""
+    tribe_vname = _tribe_html_decode(tribe_vname)
+    tribe_vname_lower = tribe_vname.lower()
+
+    # Optional filters.
+    if venue_filter and venue_filter.lower() not in tribe_vname_lower:
+        return None
+    if skip_substrings and any(s in tribe_vname_lower for s in skip_substrings):
+        return None
+
+    start = _parse_tribe_dt(raw.get("utc_start_date") or raw.get("start_date"))
+    end = _parse_tribe_dt(raw.get("utc_end_date") or raw.get("end_date"))
+    if start is None:
+        return None
+
+    url = raw.get("url") or venue_row.get("homepage", "#")
+
+    # Resolve venue_id + venue_name.
+    if split_by_venue and tribe_vname:
+        # Aggregator mode — split events by their Tribe venue field.
+        overrides = vid_overrides or {}
+        if tribe_vname in overrides:
+            venue_id = overrides[tribe_vname]
+        else:
+            venue_id = f"{venue_row['id']}-{_tribe_slug(tribe_vname)}"
+        venue_name = tribe_vname
+    else:
+        venue_id = venue_row["id"]
+        venue_name = tribe_vname or venue_row.get("display_name") or venue_row["name"]
+
+    city = venue_row.get("city", "")
+    # Category: trust the venue's declared category unless it's "mixed" (the
+    # multi-venue aggregator case). For mixed sources, lean on the global
+    # title-keyword inference + venue-name hints so Hellweg-Museum events
+    # become museum_exhibition, Stadthalle concerts become concert, etc.
+    base_cat = venue_row.get("category", "other")
+    if base_cat == "mixed":
+        # Title-keyword inference + per-venue hint map (museum/concert/etc.).
+        hint = (venue_row.get("venue_category_hints") or {}).get(venue_name)
+        if hint:
+            category = hint
+        else:
+            category = _infer_category(title, venue_row) or "other"
+    else:
+        category = base_cat
+
+    return Event(
+        title=title,
+        start=start,
+        end=end,
+        venue_id=venue_id,
+        venue_name=venue_name,
+        city=city,
+        category=category,
+        url=url,
+        description=None,
+        source=venue_row["id"],
+        audience=_infer_audience(title),
+    )
+
+
+def _parse_tribe_dt(s) -> Optional[datetime]:
+    """Parse Tribe REST datetime ('YYYY-MM-DD HH:MM:SS', UTC if from utc_*)."""
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace(" ", "T"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _tribe_html_decode(s: str) -> str:
+    """Decode HTML entities + strip embedded tags + trailing marketing ribbons."""
+    if not s:
+        return ""
+    s = _html.unescape(s)
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    for _ in range(3):  # several ribbons can stack
+        new = _TITLE_RIBBONS.sub("", s)
+        if new == s:
+            break
+        s = new.strip()
+    return s
+
+
+def _tribe_slug(s: str) -> str:
+    """Slugify a venue name for use as a venue_id suffix."""
+    s = _html.unescape(s).lower()
+    s = re.sub(r"[ä]", "ae", s)
+    s = re.sub(r"[ö]", "oe", s)
+    s = re.sub(r"[ü]", "ue", s)
+    s = re.sub(r"[ß]", "ss", s)
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s[:60]
 
 
 # ─── static path ─────────────────────────────────────────────────────────────

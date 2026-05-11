@@ -819,6 +819,93 @@
     .jet-listing-dynamic-field__content next to the calendar icon.
     Date format: "Fr., 22. Mai '26" — apostrophe-year.
 
+- id: kultur-in-unna
+  name: Kultur in Unna (city-wide aggregator)
+  display_name: Kultur in Unna
+  city: Unna
+  category: mixed
+  homepage: https://kultur-in-unna.de
+  calendar_url: https://kultur-in-unna.de/wp-json/tribe/events/v1/events?per_page=100
+  kind: tribe_rest
+  source_priority: 5
+  split_by_venue: true
+  venue_id_overrides:
+    "Kultur- und Kommunikationszentrum Lindenbrauerei e.V.": lindenbrauerei
+    "Zentrum für Internationale Lichtkunst e.V.": zil-lichtkunst-unna
+  venue_category_hints:
+    "Hellweg-Museum": museum_exhibition
+    "Kunstverein Unna e.V.": museum_exhibition
+    "Nicolaihaus": museum_exhibition
+    "Zentrum für Internationale Lichtkunst e.V.": museum_exhibition
+    "Bibliothek im zib": other
+    "Ev. Stadtkirche Unna": concert
+    "Stadthalle Unna": theatre
+    "Remise Antik-Café": other
+    "arthaus:nowodworski": museum_exhibition
+  skip_venue_substrings:
+    - "Rund ums Rathaus"
+    - "Unnaer Innenstadt"
+    - "Alter Markt"
+    - "Westfriedhof"
+  notes: |
+    Stadt Unna's official events portal. WordPress + Tribe Events Calendar.
+    ~388 events across 15+ venues. split_by_venue=true fans out into
+    per-venue chips (Hellweg-Museum, Stadthalle Unna, ZIL, Bibliothek im
+    zib, Ev. Stadtkirche, Nicolaihaus, Kunstverein Unna, etc.). The
+    overrides map kultur-in-unna's venue names back to existing venue_ids
+    so Lindenbrauerei + ZIL events from this source merge cleanly with
+    the dedicated scrapers. skip_venue_substrings drops public-square
+    festivals (Frühjahrskirmes, Innenstadt events) that aren't ticketed
+    cultural programming.
+
+- id: haus-opherdicke
+  name: Museum Haus Opherdicke
+  city: Unna
+  category: museum_exhibition
+  homepage: https://www.kreis-unna.de/Erleben/Kultur/Museum-Haus-Opherdicke/
+  calendar_url: https://www.kreis-unna.de/Erleben/Kultur/Museum-Haus-Opherdicke/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "li:has(time[datetime])"
+    title: ".list-title"
+    date: "time@datetime"
+    detail_link: "a@href"
+  notes: |
+    Kreis Unna's house museum in Holzwickede (~6km E of Unna). Hosts
+    rotating art exhibitions + accompanying programs (talks, dialogues).
+    ~45 dated events on the Kreis Unna CMS page. `time@datetime` reads
+    the ISO datetime directly — no German-string date parsing needed.
+
+# Schloss Cappenberg (Selm) — DROPPED 2026-05-11. Its page on kreis-unna.de
+# shows the SAME 20 events as Haus Opherdicke (Kreis Unna's CMS shares a
+# common district-wide event feed across museum sub-pages). All 20
+# Cappenberg events are already captured under haus-opherdicke. If the
+# castle ever gets distinct programming, re-onboard with a filter on URL
+# path containing /Museum-Schloss-Cappenberg/.
+
+- id: zil-lichtkunst-unna
+  name: Zentrum für Internationale Lichtkunst Unna
+  city: Unna
+  category: museum_exhibition
+  homepage: https://www.lichtkunst-unna.de
+  kind: static
+  source_priority: 0
+  static_events:
+    - title: "Light-Land-Scapes (Andreas Schmid, Jeongmoon Choi, Yoana Tuzharova, Atelier Rosalie)"
+      start: 2025-06-07
+      end: 2026-12-31
+      detail_url: https://www.lichtkunst-unna.de/de/ausstellungen/
+      description: "Aktuelle Wechselausstellung mit Werken zeitgenössischer Lichtkünstler:innen. Andreas Schmid: Lichtungen. Jeongmoon Choi: Floating Horizon. Yoana Tuzharova: Penumbra. Atelier Rosalie / Thomas Jürgens: STREAM I.–III."
+  notes: |
+    World's only museum dedicated to international light art, carved into
+    a former brewery cellar (former Lindenbrauerei). Permanent collection
+    + rotating temp exhibitions. The /de/ausstellungen page mixes current
+    + archive (28 .slideshow_textwrapper entries) with no machine-readable
+    dates per item — hardcoded current temp show keeps ZIL visible to mum.
+    Refresh manually when a new temp exhibition opens (check
+    /de/ausstellungen #aktuelle-ausstellung).
+
 # ============================================================================
 # DUISBURG
 # ============================================================================
