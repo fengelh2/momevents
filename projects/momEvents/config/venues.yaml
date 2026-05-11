@@ -328,6 +328,12 @@
     "Halle 12": folkwang-uni
     "Zeche Zollverein, Areal A, Halle 12": folkwang-uni
     "Alte Synagoge": alte-synagoge-essen
+    # Round 2 audit 2026-05-11 — merge zip-suffixed + variant labels
+    "Domschatz Essen": domschatz-essen
+    "Essener Dom": domschatz-essen   # cathedral + treasury are co-located
+    "UNESCO-Welterbe Zollverein 45309 Essen": visitessen-unesco-welterbe-zollverein
+    "Weststadthalle Essen": visitessen-weststadthalle
+    "Stratmanns Theater": visitessen-stratmanns-theater-im-europahaus
   skip_cities:
     - "Köln"
     - "Koeln"
@@ -353,6 +359,21 @@
     # Spa, lake, and other non-cultural venues that visitessen lists
     - "Therme"
     - "Baldeneysee"
+    # Round 2 audit: public squares, info points, transport, non-cultural
+    - "Platz"  # Domplatz, Rathausplatz, Frohnhauser Platz, Werner-Müller-Platz, Burgplatz, etc.
+    - "Anleger"  # Anleger Hügel = boat dock
+    - "Hbf"  # Hauptbahnhof / train station
+    - "Bahnhof"
+    - "Brunnen"  # fountain
+    - "Aula"  # school auditorium
+    - "Infopunkt"  # Zollverein info points
+    - "Reisebushaltestelle"  # bus stop
+    - "Werksschwimmbad"  # pool
+    - "Temple Bar"  # nightclub
+    - "Gymnasium"  # already had — keep
+    - "La Primavera"  # restaurant
+    - "Kunstwiese"  # outdoor "art meadow"
+    - "Schlö Borbeck"   # mojibake of "Schloß Borbeck" — already covered under correct name
   notes: |
     Stadt Essen's official events portal via the Saxon et4 tourism CMS.
     Two-step scrape:
