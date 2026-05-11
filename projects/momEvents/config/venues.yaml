@@ -296,6 +296,24 @@
 # GOP Varieté-Theater Essen — currently relocating, so only the upcoming
 # "GROOVE" show is on their Essen page. We pick up Essen + the temporary
 # "Artistical Essen" venue using both data-class attributes.
+- id: maschinenhaus-essen
+  name: Maschinenhaus Essen
+  city: Essen
+  category: mixed
+  homepage: https://maschinenhaus-essen.de
+  calendar_url: https://maschinenhaus-essen.de/
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "article.event"
+    title: ".event-title"
+    date: ".event-datum"
+    detail_link: ".event-title a@href"
+  notes: |
+    Kleinkunst / Sommer-Kunst-Camp venue in Essen-Stoppenberg.
+    Date format e.g. "19.–25. Juli 2026" (date range with German dash).
+    ~4 events on homepage; full programme also browseable per-category.
+
 - id: gop-essen
   name: GOP Varieté-Theater Essen
   city: Essen
