@@ -296,6 +296,56 @@
 # GOP Varieté-Theater Essen — currently relocating, so only the upcoming
 # "GROOVE" show is on their Essen page. We pick up Essen + the temporary
 # "Artistical Essen" venue using both data-class attributes.
+- id: visitessen
+  name: Stadt Essen (visitessen.de city-wide aggregator)
+  display_name: visitessen
+  city: Essen
+  category: mixed
+  homepage: https://visitessen.de
+  calendar_url: https://pages.visitessen.de/de/visitessen/default/search/Event
+  kind: et4_search
+  experience: visitessen
+  source_priority: 5
+  split_by_venue: true
+  venue_id_overrides:
+    "Aalto-Theater": aalto-essen
+    "Grillo-Theater": grillo-essen
+    "Philharmonie Essen": philharmonie-essen
+    "Museum Folkwang": museum-folkwang
+    "Folkwang Universität der Künste": folkwang-uni
+    "Lichtburg": lichtburg-essen
+    "Lichtburg Essen": lichtburg-essen
+    "Theater Courage": theater-courage
+    "GOP Varieté-Theater Essen": gop-essen
+    "Villa Hügel": villa-huegel
+    "Alte Synagoge Essen": alte-synagoge-essen
+    "Ruhr Museum": ruhr-museum
+    "Red Dot Design Museum": red-dot-museum
+    "Maschinenhaus Essen": maschinenhaus-essen
+    "Ruhrfestspiele Recklinghausen": ruhrfestspiele
+  skip_cities:
+    - "Köln"
+    - "Koeln"
+  skip_venue_substrings:
+    # Outdoor public squares + non-cultural locations
+    - "Marktplatz"
+    - "Innenstadt"
+    - "Park "
+    - "Stadtgarten"
+    - "Stadtteil"
+  notes: |
+    Stadt Essen's official events portal via the Saxon et4 tourism CMS.
+    Two-step scrape:
+      (1) Fetch iframe HTML at pages.visitessen.de/.../default/search/Event
+          to extract a fresh JWT licensekey (~21h expiry, rotates per fetch).
+      (2) POST a search query to meta.et4.de/rest.ashx/search/ with template
+          ET2014A_LIGHT.json → returns clean JSON of ~600 events across all
+          Essen cultural venues.
+    Splits events into per-venue chips (Zeche Carl, Aalto, Grillo, Stratmanns,
+    etc.). venue_id_overrides fold known venues back onto their existing
+    rows so events from this aggregator merge cleanly. Discovered + onboarded
+    2026-05-11.
+
 - id: maschinenhaus-essen
   name: Maschinenhaus Essen
   city: Essen

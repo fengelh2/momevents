@@ -85,6 +85,8 @@ def scrape(venue_row: dict, session: Optional[requests.Session] = None) -> list[
             events = _scrape_static(venue_row)
         elif kind == "tribe_rest":
             events = _scrape_tribe_rest(venue_row, session=session)
+        elif kind == "et4_search":
+            events = _scrape_et4_search(venue_row, session=session)
         elif kind == "unknown":
             log.info("skip %s: kind=unknown (pending onboarding)", venue_id)
             return []
@@ -384,6 +386,267 @@ def _tribe_slug(s: str) -> str:
     s = re.sub(r"[ß]", "ss", s)
     s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
     return s[:60]
+
+
+# ─── et4 (Saxon) tourism platform search path ───────────────────────────────
+# Used by visitessen.de (the Stadt Essen city-wide events aggregator) and
+# probably other DACH-region tourism portals (Saxon GmbH / destination.one).
+# The portal page embeds a short-lived JWT licensekey; we fetch the iframe
+# HTML, extract the licensekey, then POST a search query to meta.et4.de.
+# Response is JSON when template=ET2014A_LIGHT.json. Two-step but doable
+# with plain requests — no Playwright needed at runtime.
+
+import json as _et4_json
+
+
+def _scrape_et4_search(venue_row: dict, session=None) -> list[Event]:
+    """Scrape an et4 (Saxon) tourism portal search index.
+
+    Config:
+      calendar_url:   the iframe HTML page on pages.<host>.de that embeds the
+                      licensekey (e.g. .../default/search/Event). Required.
+      experience:     et4 experience name (e.g. "visitessen"). Required.
+      api_endpoint:   defaults to https://meta.et4.de/rest.ashx/search/
+      template:       defaults to ET2014A_LIGHT.json (returns JSON items)
+      max_limit:      single-request limit (default 1000; the API caps).
+      split_by_venue: bool — fan out events by `name` field (default true).
+      venue_id_overrides: {tribe_venue_name: canonical_venue_id} so events
+                      from this aggregator fold under existing venue rows
+                      (e.g. Aalto, Grillo, Folkwang Museum).
+      skip_venue_substrings: drop events whose `name` contains any.
+      drop_cancelled: bool, default true — drop events with DETAILS_ABGESAGT.
+    """
+    sess = session or requests
+    iframe_url = venue_row["calendar_url"]
+    experience = venue_row["experience"]
+    api_endpoint = venue_row.get("api_endpoint", "https://meta.et4.de/rest.ashx/search/")
+    template = venue_row.get("template", "ET2014A_LIGHT.json")
+    max_limit = int(venue_row.get("max_limit", 1000))
+    split_by_venue = bool(venue_row.get("split_by_venue", True))
+    vid_overrides = venue_row.get("venue_id_overrides") or {}
+    skip_substrings = [s.lower() for s in (venue_row.get("skip_venue_substrings") or [])]
+    drop_cancelled = bool(venue_row.get("drop_cancelled", True))
+
+    # Step 1: fetch iframe page, extract fresh licensekey (JWT, ~21h validity).
+    try:
+        r1 = sess.get(iframe_url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+        r1.raise_for_status()
+    except requests.RequestException as exc:
+        log.warning("%s: et4 iframe fetch failed: %s", venue_row["id"], exc)
+        return []
+    m = re.search(r'"licensekey"\s*:\s*"([^"]+)"', r1.text)
+    if not m:
+        log.warning("%s: et4 licensekey not found in iframe page", venue_row["id"])
+        return []
+    licensekey = m.group(1)
+
+    # Step 2: paginate the search API. et4 caps response size; pull pages of
+    # min(max_limit, 200) until overallcount is reached.
+    page_size = min(max_limit, 200)
+    all_items: list[dict] = []
+    offset = 0
+    for _ in range(20):  # safety: at most 20 pages
+        payload = {
+            "offset": offset,
+            "limit": page_size,
+            "facets": False,
+            "type": "Event",
+            "experience": experience,
+            "q": venue_row.get("q", "all:all -systag:has_abnormal_interval"),
+            "template": template,
+            "licensekey": licensekey,
+            "maxresponsetime": "0",
+        }
+        try:
+            r = sess.post(
+                api_endpoint,
+                json=payload,
+                headers={
+                    **DEFAULT_HEADERS,
+                    "Content-Type": "application/json",
+                    "Origin": "https://" + iframe_url.split("/")[2],
+                },
+                timeout=DEFAULT_TIMEOUT + 10,
+            )
+            r.raise_for_status()
+            data = r.json()
+        except (requests.RequestException, ValueError) as exc:
+            log.warning("%s: et4 search offset=%d failed: %s", venue_row["id"], offset, exc)
+            break
+        items = data.get("items") or []
+        all_items.extend(items)
+        overallcount = int(data.get("overallcount") or 0)
+        offset += len(items)
+        if not items or offset >= overallcount:
+            break
+
+    log.debug("%s: et4 returned %d raw items", venue_row["id"], len(all_items))
+
+    # Step 3: map to Event records, deduping by (venue_id, url, start).
+    out: list[Event] = []
+    seen: set[tuple] = set()
+    for it in all_items:
+        ev = _et4_to_event(
+            it, venue_row,
+            split_by_venue=split_by_venue,
+            vid_overrides=vid_overrides,
+            skip_substrings=skip_substrings,
+            drop_cancelled=drop_cancelled,
+        )
+        if ev is None:
+            continue
+        key = (ev.venue_id, ev.title, ev.start)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(ev)
+
+    log.info("%s: %d events from et4_search", venue_row["id"], len(out))
+    return out
+
+
+def _et4_to_event(
+    raw: dict, venue_row: dict,
+    split_by_venue: bool = True,
+    vid_overrides: dict | None = None,
+    skip_substrings: list[str] | None = None,
+    drop_cancelled: bool = True,
+) -> Optional[Event]:
+    """Map one et4 item to a canonical Event."""
+    title = (raw.get("title") or "").strip()
+    if not title:
+        return None
+    # Strip " | Abgesagt" / " - Abgesagt" cancelled suffixes; also drop the row.
+    for suffix in (" | Abgesagt", " - Abgesagt", " | ABGESAGT"):
+        if title.endswith(suffix):
+            title = title[: -len(suffix)].strip()
+
+    # Attributes (k/v list) — check for cancellation flag.
+    attrs_list = raw.get("attributes") or []
+    attrs = {a.get("key"): a.get("value") for a in attrs_list if isinstance(a, dict)}
+    if drop_cancelled and str(attrs.get("DETAILS_ABGESAGT", "")).lower() == "true":
+        return None
+
+    # Venue name (the `name` field on each et4 Event item is the venue).
+    venue_name = (raw.get("name") or "").strip()
+    venue_lower = venue_name.lower()
+    if skip_substrings and any(s in venue_lower for s in skip_substrings):
+        return None
+
+    # Date/time from timeIntervals[0].
+    intervals = raw.get("timeIntervals") or []
+    if not intervals:
+        return None
+    start = _et4_parse_dt(intervals[0].get("start"))
+    end = _et4_parse_dt(intervals[0].get("end"))
+    if start is None:
+        return None
+
+    # Build the detail URL from URL_TITLE + id.
+    url_slug = attrs.get("URL_TITLE", "")
+    ev_id = raw.get("id", "")
+    if url_slug and ev_id:
+        # visitessen detail-page pattern:
+        # https://pages.visitessen.de/de/visitessen/streaming/detail/Event/{id}/{slug}/
+        base = "https://" + venue_row["calendar_url"].split("/")[2]
+        url = f"{base}/de/visitessen/streaming/detail/Event/{ev_id}/{url_slug}/"
+    else:
+        url = venue_row.get("homepage", "#")
+
+    # Resolve venue_id.
+    overrides = vid_overrides or {}
+    if split_by_venue and venue_name:
+        if venue_name in overrides:
+            venue_id = overrides[venue_name]
+        else:
+            venue_id = f"{venue_row['id']}-{_tribe_slug(venue_name)}"
+    else:
+        venue_id = venue_row["id"]
+        if not venue_name:
+            venue_name = venue_row.get("display_name") or venue_row["name"]
+
+    # Category: map et4 categories[0] (German "Vortrag/Lesung", "Konzert", etc.)
+    # into our schema.
+    cats = raw.get("categories") or []
+    raw_cat = cats[0] if cats else ""
+    cat_map = venue_row.get("category_map") or _ET4_CATEGORY_MAP
+    deny_cats = set(venue_row.get("deny_categories") or _ET4_DENY_CATEGORIES)
+    if raw_cat in deny_cats:
+        return None
+    category = cat_map.get(raw_cat) or venue_row.get("category", "other")
+    if category == "mixed":
+        category = "other"
+    # Keyword overlay still beats venue-level guess.
+    category = _infer_category(title, venue_row, stage_default=category)
+
+    # Use the event's own city (et4 data carries it per-item) so events at
+    # neighbouring venues — Musiktheater im Revier Gelsenkirchen,
+    # Ruhrfestspiele Recklinghausen, etc. — get tagged correctly instead of
+    # all defaulting to the aggregator's host city.
+    city = (raw.get("city") or venue_row.get("city") or "").strip()
+    # Optional out-of-scope filter (Köln etc. per CLAUDE.md).
+    skip_cities = [c.lower() for c in (venue_row.get("skip_cities") or [])]
+    if skip_cities and city.lower() in skip_cities:
+        return None
+
+    return Event(
+        title=title,
+        start=start,
+        end=end,
+        venue_id=venue_id,
+        venue_name=venue_name or venue_row["name"],
+        city=city,
+        category=category,
+        url=url,
+        description=None,
+        source=venue_row["id"],
+        audience=_infer_audience(title),
+    )
+
+
+def _et4_parse_dt(s) -> Optional[datetime]:
+    """Parse an et4 ISO-8601 string (e.g. '2026-08-06T20:00:00+02:00')."""
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+# Default et4-category → our-schema mapping. Override per-venue via
+# `category_map` in venues.yaml if needed.
+_ET4_CATEGORY_MAP = {
+    "Ausstellung": "museum_exhibition",
+    "Theater & Film": "theatre",
+    "Schauspiel": "theatre",
+    "Kinder- und Jugendtheater": "theatre",
+    "Kabarett & Co.": "theatre",
+    "Musical & Musiktheater": "theatre",
+    "Oper": "opera",
+    "Operette": "opera",
+    "Ballett": "ballet",
+    "Tanz": "ballet",
+    "Konzert": "concert",
+    "Klassik": "concert",
+    "Jazz": "concert",
+    "Pop/Rock": "concert",
+    "Chormusik": "concert",
+    "Lesung": "other",
+    "Vortrag/Lesung": "other",
+    "Vortrag": "other",
+    "Brauchtum/Kultur": "other",
+    "Führung": "other",
+}
+
+# Categories to drop entirely — not cultural content for mum's calendar.
+_ET4_DENY_CATEGORIES = frozenset({
+    "Markt", "Märkte", "Flohmarkt",
+    "Sport",
+    "Party", "Disco",
+    "Messe",
+    "Ausflug/Exkursion",   # mostly day-trip / hiking listings, not cultural
+})
 
 
 # ─── static path ─────────────────────────────────────────────────────────────
