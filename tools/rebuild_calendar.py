@@ -110,7 +110,7 @@ def main() -> int:
         events=all_events,
         out_path=args.out,
         featured=featured,
-        title="Was ist los",
+        title="Kultur in Essen — Was ist los in Gabis Welt",
         horizon_days=args.horizon_days,
         now=datetime.now(timezone.utc),
         venue_meta=venue_meta,
