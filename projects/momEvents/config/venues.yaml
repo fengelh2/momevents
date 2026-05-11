@@ -323,9 +323,26 @@
     "Red Dot Design Museum": red-dot-museum
     "Maschinenhaus Essen": maschinenhaus-essen
     "Ruhrfestspiele Recklinghausen": ruhrfestspiele
+    # Audit 2026-05-11: dedupe chips that point to existing venues
+    "Theater und Philharmonie Essen": tup-essen
+    "Halle 12": folkwang-uni
+    "Zeche Zollverein, Areal A, Halle 12": folkwang-uni
+    "Alte Synagoge": alte-synagoge-essen
   skip_cities:
     - "Köln"
     - "Koeln"
+    # Cities visitessen pulls in that mum doesn't browse on this calendar.
+    # All are technically in scope per CLAUDE.md but user explicitly asked
+    # them hidden 2026-05-11. (Re-add to keep Musiktheater im Revier
+    # Gelsenkirchen, Schauspielhaus Bochum, etc. if scope expands later.)
+    - "Bochum"
+    - "Gelsenkirchen"
+    - "Mülheim an der Ruhr"
+    - "Mülheim a. d. Ruhr"
+    - "Muelheim an der Ruhr"
+    - "Moers"
+    # Out-of-scope geography that occasionally leaks in
+    - "Berlin"
   skip_venue_substrings:
     # Outdoor public squares + non-cultural locations
     - "Marktplatz"
@@ -333,6 +350,9 @@
     - "Park "
     - "Stadtgarten"
     - "Stadtteil"
+    # Spa, lake, and other non-cultural venues that visitessen lists
+    - "Therme"
+    - "Baldeneysee"
   notes: |
     Stadt Essen's official events portal via the Saxon et4 tourism CMS.
     Two-step scrape:
@@ -384,6 +404,26 @@
     treated as start = first of month. data-class*="Essen" matches both the
     main Essen venue (currently in transition) and the temporary "Artistical
     Essen" satellite.
+
+- id: gop-muenster
+  name: GOP Varieté-Theater Münster
+  city: Münster
+  category: theatre
+  homepage: https://www.variete.de/muenster/
+  kind: static
+  source_priority: 0
+  static_events:
+    - title: "Deluxe"
+      start: 2026-04-16
+      end: 2026-07-05
+      detail_url: https://www.variete.de/muenster/programm/
+      description: "Aktuelle Show im GOP Varieté-Theater Münster — 'Deluxe' (16. April bis 5. Juli)."
+  notes: |
+    Sister to gop-essen. variete.de/muenster/programm lists 1 active
+    production at a time. Date format on site is "16. April bis 5. Juli"
+    (no year) which is hard for dateparser given current-date-past-April-16
+    bias; using static config instead. Refresh manually when the production
+    changes (check the site). Added 2026-05-11.
 
 # Museum Domschatz Essen — closed for renovation through 18 June 2026. Static
 # notice keeps it visible so mum knows the closure status; replace once the
