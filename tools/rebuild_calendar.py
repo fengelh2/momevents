@@ -87,6 +87,24 @@ def main() -> int:
     featured = _compute_featured_set(all_events, highlights)
     log.info("flagged %d events as featured", len(featured))
 
+    # Build venue_id → canonical display name map. Used by the renderer for
+    # chip labels — without it, off-site events (e.g. TUP-organized events at
+    # Gruga-Park / Café Central / ADA) would each produce their own chip that
+    # silently filters to ALL events sharing that venue_id.
+    venue_meta: dict[str, str] = {}
+    for v in venues:
+        # Primary venue row
+        primary_id = v.get("id")
+        primary_label = v.get("display_name") or v.get("name") or primary_id
+        if primary_id:
+            venue_meta.setdefault(primary_id, primary_label)
+        # Each stage_resolver row may produce a different venue_id with its own label
+        for stage in v.get("stage_resolver") or []:
+            sid = stage.get("venue_id")
+            slabel = stage.get("venue_name") or sid
+            if sid:
+                venue_meta.setdefault(sid, slabel)
+
     # Render
     n = render_events_html.render(
         events=all_events,
@@ -95,6 +113,7 @@ def main() -> int:
         title="Was ist los",
         horizon_days=args.horizon_days,
         now=datetime.now(timezone.utc),
+        venue_meta=venue_meta,
     )
 
     # Summary report

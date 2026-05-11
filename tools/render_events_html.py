@@ -191,6 +191,7 @@ def render(
     subtitle: Optional[str] = None,
     now: Optional[datetime] = None,
     horizon_days: int = 90,
+    venue_meta: Optional[dict] = None,
 ) -> int:
     """Render `events` (list of Event dataclasses or dicts) to one HTML file.
 
@@ -242,37 +243,65 @@ def render(
         week_groups=week_groups,
         featured=featured,
         visible_events=visible,
+        venue_meta=venue_meta or {},
     )
     out_path.write_text(html_text, encoding="utf-8")
     return len(visible)
 
 
-def _collect_venues_by_city(events: list) -> dict[str, list[tuple[str, str, set, set]]]:
+def _collect_venues_by_city(
+    events: list,
+    venue_meta: Optional[dict] = None,
+) -> dict[str, list[tuple[str, str, set, set]]]:
     """Build {city_slug: [(chip_id, display_name, {venue_ids}, {category_slugs}), ...]}
 
-    Venues are grouped by **display name** within each city so multiple sources
-    targeting the same physical venue (e.g. `kunstpalast` + `kunstpalast-current`)
-    collapse into ONE chip that controls both. chip_id is `<city>-<name-slug>`.
+    Chips are grouped by **venue_id**, not per-event venue_name. This matters
+    when one venue_id produces events at multiple display locations — e.g.
+    TUP organizes events at Café Central, ADA, Gruga-Park, all of which carry
+    venue_id="grillo-essen" or "tup-essen". Grouping by venue_name would create
+    phantom chips ("Café Central", "Gruga-Park") that secretly filter to ALL
+    events of the parent venue_id; that's confusing and was the source of a
+    real user complaint.
+
+    Chip label resolution:
+      1. venue_meta[venue_id] from venues.yaml (display_name on the venue
+         row, or venue_name on its stage_resolver row).
+      2. Fallback: mode (most-common) venue_name among events with that vid.
+
+    chip_id = "<city>-<label-slug>". If two distinct venue_ids collapse onto
+    the same label (Kunstpalast's two sources), they merge naturally.
 
     Per-venue category set tags the chip with `has-cat-X` classes for the
     "hide chips not relevant to the selected category" CSS rules.
     Aggregator events skipped.
     """
-    seen: dict[str, dict[str, dict]] = {}
+    from collections import Counter as _Counter
+    venue_meta = venue_meta or {}
+    # First pass — per venue_id collect venue_name distribution + cats.
+    by_vid: dict[str, dict] = {}
     for e in events:
         vid = _attr(e, "venue_id") or ""
         vname = _attr(e, "venue_name") or ""
         city = _attr(e, "city") or ""
         if not vid or not city or city == "__aggregator__":
             continue
-        cslug = _city_slug(city)
-        chip_label = _normalize_chip_name(vname)
+        bucket = by_vid.setdefault(vid, {"city": city, "names": _Counter(), "cats": set()})
+        bucket["names"][vname] += 1
+        bucket["cats"].add(_slug(_attr(e, "category") or "other"))
+
+    # Second pass — assign a canonical chip label to each venue_id.
+    seen: dict[str, dict[str, dict]] = {}
+    for vid, bucket in by_vid.items():
+        cslug = _city_slug(bucket["city"])
+        canonical = venue_meta.get(vid) or (bucket["names"].most_common(1)[0][0] if bucket["names"] else vid)
+        chip_label = _normalize_chip_name(canonical)
         chip_id = f"{cslug}-{_css_safe(chip_label.lower())}"
         group = seen.setdefault(cslug, {}).setdefault(
             chip_id, {"name": chip_label, "venue_ids": set(), "cats": set()}
         )
         group["venue_ids"].add(vid)
-        group["cats"].add(_slug(_attr(e, "category") or "other"))
+        group["cats"].update(bucket["cats"])
+
     out: dict[str, list[tuple[str, str, set, set]]] = {}
     for cslug, groups in seen.items():
         out[cslug] = sorted(
@@ -504,8 +533,9 @@ def _render_html(
     week_groups: list[tuple[str, list]],
     featured: set,
     visible_events: list,
+    venue_meta: Optional[dict] = None,
 ) -> str:
-    venues_by_city = _collect_venues_by_city(visible_events)
+    venues_by_city = _collect_venues_by_city(visible_events, venue_meta=venue_meta)
     # Flatten to {chip_id: {venue_ids: set}} — one entry per chip, even if the chip
     # controls multiple sources (Kunstpalast + Kunstpalast-current → one chip).
     chips_meta: dict[str, set] = {}
@@ -549,8 +579,8 @@ def _render_html(
     for slot, _label in WHEN_OPTIONS:
         when_css_rules.append(
             f'#w-{slot}:checked ~ .agenda .row:not([data-when~="{slot}"]), '
-            f'#w-{slot}:checked ~ .agenda .day:not(:has(.row[data-when~="{slot}"]:not(.audience-kids):not(.audience-active))), '
-            f'#w-{slot}:checked ~ .agenda .week:not(:has(.row[data-when~="{slot}"]:not(.audience-kids):not(.audience-active))), '
+            f'#w-{slot}:checked ~ .agenda .day:not(:has(.row[data-when~="{slot}"]:not(.audience-kids):not(.audience-active):not(.venue-hidden))), '
+            f'#w-{slot}:checked ~ .agenda .week:not(:has(.row[data-when~="{slot}"]:not(.audience-kids):not(.audience-active):not(.venue-hidden))), '
             f'#w-{slot}:checked ~ .featured .featured-card:not([data-when~="{slot}"]), '
             f'#w-{slot}:checked ~ .featured:not(:has(.featured-card[data-when~="{slot}"])) '
             f'{{ display: none; }}'
@@ -576,18 +606,18 @@ def _render_html(
         city_css_rules.append(
             f'#c-{cslug}:checked ~ .featured .featured-card:not(.city-{cslug}), '
             f'#c-{cslug}:checked ~ .agenda .row:not(.city-{cslug}), '
-            f'#c-{cslug}:checked ~ .agenda .day:not(:has(.row.city-{cslug}:not(.audience-kids):not(.audience-active))), '
-            f'#c-{cslug}:checked ~ .agenda .week:not(:has(.row.city-{cslug}:not(.audience-kids):not(.audience-active))), '
+            f'#c-{cslug}:checked ~ .agenda .day:not(:has(.row.city-{cslug}:not(.audience-kids):not(.audience-active):not(.venue-hidden))), '
+            f'#c-{cslug}:checked ~ .agenda .week:not(:has(.row.city-{cslug}:not(.audience-kids):not(.audience-active):not(.venue-hidden))), '
             f'#c-{cslug}:checked ~ .featured:not(:has(.featured-card.city-{cslug})) '
             f'{{ display: none; }}'
         )
         city_css_rules.append(
-            f'#c-{cslug}:checked ~ .agenda:not(:has(.row.city-{cslug}:not(.audience-kids):not(.audience-active))) .filter-empty {{ display: block; }}'
+            f'#c-{cslug}:checked ~ .agenda:not(:has(.row.city-{cslug}:not(.audience-kids):not(.audience-active):not(.venue-hidden))) .filter-empty {{ display: block; }}'
         )
         # Override single-city: re-show days/weeks when extras toggle reveals kids/active
         city_css_rules.append(
-            f'#show-extras:checked ~ #c-{cslug}:checked ~ .agenda .day:has(.row.city-{cslug}), '
-            f'#show-extras:checked ~ #c-{cslug}:checked ~ .agenda .week:has(.row.city-{cslug}) '
+            f'#show-extras:checked ~ #c-{cslug}:checked ~ .agenda .day:has(.row.city-{cslug}:not(.venue-hidden)), '
+            f'#show-extras:checked ~ #c-{cslug}:checked ~ .agenda .week:has(.row.city-{cslug}:not(.venue-hidden)) '
             f'{{ display: block !important; }}'
         )
         city_css_rules.append(
@@ -601,13 +631,13 @@ def _render_html(
         # Order matters: f-* inputs emit before c-* inputs in DOM.
         for cat in CATS_FOR_COMBO:
             city_css_rules.append(
-                f'#f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .day:not(:has(.row.city-{cslug}.cat-{cat}:not(.audience-kids):not(.audience-active))), '
-                f'#f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .week:not(:has(.row.city-{cslug}.cat-{cat}:not(.audience-kids):not(.audience-active))) '
+                f'#f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .day:not(:has(.row.city-{cslug}.cat-{cat}:not(.audience-kids):not(.audience-active):not(.venue-hidden))), '
+                f'#f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .week:not(:has(.row.city-{cslug}.cat-{cat}:not(.audience-kids):not(.audience-active):not(.venue-hidden))) '
                 f'{{ display: none; }}'
             )
             city_css_rules.append(
-                f'#show-extras:checked ~ #f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .day:has(.row.city-{cslug}.cat-{cat}), '
-                f'#show-extras:checked ~ #f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .week:has(.row.city-{cslug}.cat-{cat}) '
+                f'#show-extras:checked ~ #f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .day:has(.row.city-{cslug}.cat-{cat}:not(.venue-hidden)), '
+                f'#show-extras:checked ~ #f-{cat}:checked ~ #c-{cslug}:checked ~ .agenda .week:has(.row.city-{cslug}.cat-{cat}:not(.venue-hidden)) '
                 f'{{ display: block !important; }}'
             )
     city_css = "\n    ".join(city_css_rules)
@@ -1136,8 +1166,8 @@ _PAGE_HEAD = """<!DOCTYPE html>
     /* When body has the .has-search-query class, hide rows/cards not flagged as matching.
        Empty days/weeks/featured collapse via :has, mirroring the other filters. */
     body.has-search-query a.row:not(.search-match),
-    body.has-search-query .agenda .day:not(:has(a.row.search-match)),
-    body.has-search-query .agenda .week:not(:has(a.row.search-match)),
+    body.has-search-query .agenda .day:not(:has(a.row.search-match:not(.venue-hidden))),
+    body.has-search-query .agenda .week:not(:has(a.row.search-match:not(.venue-hidden))),
     body.has-search-query .featured .featured-card:not(.search-match),
     body.has-search-query .featured:not(:has(.featured-card.search-match)) {{ display: none; }}
     /* Filter bar — Wo / Was / Wann / Häuser share consistent spacing & chip styles */
@@ -1218,54 +1248,54 @@ _PAGE_HEAD = """<!DOCTYPE html>
     /* Opera */
     #f-opera:checked   ~ .featured .featured-card:not(.cat-opera),
     #f-opera:checked   ~ .agenda .row:not(.cat-opera),
-    #f-opera:checked   ~ .agenda .day:not(:has(.row.cat-opera:not(.audience-kids):not(.audience-active))),
-    #f-opera:checked   ~ .agenda .week:not(:has(.row.cat-opera:not(.audience-kids):not(.audience-active))),
+    #f-opera:checked   ~ .agenda .day:not(:has(.row.cat-opera:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
+    #f-opera:checked   ~ .agenda .week:not(:has(.row.cat-opera:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
     #f-opera:checked   ~ .featured:not(:has(.featured-card.cat-opera)) {{ display: none; }}
-    #f-opera:checked   ~ .agenda:not(:has(.row.cat-opera:not(.audience-kids):not(.audience-active))) .filter-empty {{ display: block; }}
-    #show-extras:checked ~ #f-opera:checked ~ .agenda .day:has(.row.cat-opera),
-    #show-extras:checked ~ #f-opera:checked ~ .agenda .week:has(.row.cat-opera) {{ display: block !important; }}
+    #f-opera:checked   ~ .agenda:not(:has(.row.cat-opera:not(.audience-kids):not(.audience-active):not(.venue-hidden))) .filter-empty {{ display: block; }}
+    #show-extras:checked ~ #f-opera:checked ~ .agenda .day:has(.row.cat-opera:not(.venue-hidden)),
+    #show-extras:checked ~ #f-opera:checked ~ .agenda .week:has(.row.cat-opera:not(.venue-hidden)) {{ display: block !important; }}
     /* Concert */
     #f-concert:checked ~ .featured .featured-card:not(.cat-concert),
     #f-concert:checked ~ .agenda .row:not(.cat-concert),
-    #f-concert:checked ~ .agenda .day:not(:has(.row.cat-concert:not(.audience-kids):not(.audience-active))),
-    #f-concert:checked ~ .agenda .week:not(:has(.row.cat-concert:not(.audience-kids):not(.audience-active))),
+    #f-concert:checked ~ .agenda .day:not(:has(.row.cat-concert:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
+    #f-concert:checked ~ .agenda .week:not(:has(.row.cat-concert:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
     #f-concert:checked ~ .featured:not(:has(.featured-card.cat-concert)) {{ display: none; }}
-    #f-concert:checked ~ .agenda:not(:has(.row.cat-concert:not(.audience-kids):not(.audience-active))) .filter-empty {{ display: block; }}
-    #show-extras:checked ~ #f-concert:checked ~ .agenda .day:has(.row.cat-concert),
-    #show-extras:checked ~ #f-concert:checked ~ .agenda .week:has(.row.cat-concert) {{ display: block !important; }}
+    #f-concert:checked ~ .agenda:not(:has(.row.cat-concert:not(.audience-kids):not(.audience-active):not(.venue-hidden))) .filter-empty {{ display: block; }}
+    #show-extras:checked ~ #f-concert:checked ~ .agenda .day:has(.row.cat-concert:not(.venue-hidden)),
+    #show-extras:checked ~ #f-concert:checked ~ .agenda .week:has(.row.cat-concert:not(.venue-hidden)) {{ display: block !important; }}
     /* Ballet */
     #f-ballet:checked  ~ .featured .featured-card:not(.cat-ballet),
     #f-ballet:checked  ~ .agenda .row:not(.cat-ballet),
-    #f-ballet:checked  ~ .agenda .day:not(:has(.row.cat-ballet:not(.audience-kids):not(.audience-active))),
-    #f-ballet:checked  ~ .agenda .week:not(:has(.row.cat-ballet:not(.audience-kids):not(.audience-active))),
+    #f-ballet:checked  ~ .agenda .day:not(:has(.row.cat-ballet:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
+    #f-ballet:checked  ~ .agenda .week:not(:has(.row.cat-ballet:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
     #f-ballet:checked  ~ .featured:not(:has(.featured-card.cat-ballet)) {{ display: none; }}
-    #f-ballet:checked  ~ .agenda:not(:has(.row.cat-ballet:not(.audience-kids):not(.audience-active))) .filter-empty {{ display: block; }}
-    #show-extras:checked ~ #f-ballet:checked ~ .agenda .day:has(.row.cat-ballet),
-    #show-extras:checked ~ #f-ballet:checked ~ .agenda .week:has(.row.cat-ballet) {{ display: block !important; }}
+    #f-ballet:checked  ~ .agenda:not(:has(.row.cat-ballet:not(.audience-kids):not(.audience-active):not(.venue-hidden))) .filter-empty {{ display: block; }}
+    #show-extras:checked ~ #f-ballet:checked ~ .agenda .day:has(.row.cat-ballet:not(.venue-hidden)),
+    #show-extras:checked ~ #f-ballet:checked ~ .agenda .week:has(.row.cat-ballet:not(.venue-hidden)) {{ display: block !important; }}
     /* Theatre */
     #f-theatre:checked ~ .featured .featured-card:not(.cat-theatre),
     #f-theatre:checked ~ .agenda .row:not(.cat-theatre),
-    #f-theatre:checked ~ .agenda .day:not(:has(.row.cat-theatre:not(.audience-kids):not(.audience-active))),
-    #f-theatre:checked ~ .agenda .week:not(:has(.row.cat-theatre:not(.audience-kids):not(.audience-active))),
+    #f-theatre:checked ~ .agenda .day:not(:has(.row.cat-theatre:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
+    #f-theatre:checked ~ .agenda .week:not(:has(.row.cat-theatre:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
     #f-theatre:checked ~ .featured:not(:has(.featured-card.cat-theatre)) {{ display: none; }}
-    #f-theatre:checked ~ .agenda:not(:has(.row.cat-theatre:not(.audience-kids):not(.audience-active))) .filter-empty {{ display: block; }}
-    #show-extras:checked ~ #f-theatre:checked ~ .agenda .day:has(.row.cat-theatre),
-    #show-extras:checked ~ #f-theatre:checked ~ .agenda .week:has(.row.cat-theatre) {{ display: block !important; }}
+    #f-theatre:checked ~ .agenda:not(:has(.row.cat-theatre:not(.audience-kids):not(.audience-active):not(.venue-hidden))) .filter-empty {{ display: block; }}
+    #show-extras:checked ~ #f-theatre:checked ~ .agenda .day:has(.row.cat-theatre:not(.venue-hidden)),
+    #show-extras:checked ~ #f-theatre:checked ~ .agenda .week:has(.row.cat-theatre:not(.venue-hidden)) {{ display: block !important; }}
     /* Exhibition */
     #f-exh:checked     ~ .featured .featured-card:not(.cat-exh),
     #f-exh:checked     ~ .agenda .row:not(.cat-exh),
-    #f-exh:checked     ~ .agenda .day:not(:has(.row.cat-exh:not(.audience-kids):not(.audience-active))),
-    #f-exh:checked     ~ .agenda .week:not(:has(.row.cat-exh:not(.audience-kids):not(.audience-active))),
+    #f-exh:checked     ~ .agenda .day:not(:has(.row.cat-exh:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
+    #f-exh:checked     ~ .agenda .week:not(:has(.row.cat-exh:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
     #f-exh:checked     ~ .featured:not(:has(.featured-card.cat-exh)) {{ display: none; }}
-    #f-exh:checked     ~ .agenda:not(:has(.row.cat-exh:not(.audience-kids):not(.audience-active))) .filter-empty {{ display: block; }}
-    #show-extras:checked ~ #f-exh:checked ~ .agenda .day:has(.row.cat-exh),
-    #show-extras:checked ~ #f-exh:checked ~ .agenda .week:has(.row.cat-exh) {{ display: block !important; }}
+    #f-exh:checked     ~ .agenda:not(:has(.row.cat-exh:not(.audience-kids):not(.audience-active):not(.venue-hidden))) .filter-empty {{ display: block; }}
+    #show-extras:checked ~ #f-exh:checked ~ .agenda .day:has(.row.cat-exh:not(.venue-hidden)),
+    #show-extras:checked ~ #f-exh:checked ~ .agenda .week:has(.row.cat-exh:not(.venue-hidden)) {{ display: block !important; }}
     /* When NO category filter is active, still hide days/weeks that contain only
        audience-hidden rows (e.g. a school-concert-only day in default view). */
-    .agenda .day:not(:has(.row:not(.audience-kids):not(.audience-active))),
-    .agenda .week:not(:has(.row:not(.audience-kids):not(.audience-active))) {{ display: none; }}
-    #show-extras:checked ~ .agenda .day:has(.row),
-    #show-extras:checked ~ .agenda .week:has(.row) {{ display: block !important; }}
+    .agenda .day:not(:has(.row:not(.audience-kids):not(.audience-active):not(.venue-hidden))),
+    .agenda .week:not(:has(.row:not(.audience-kids):not(.audience-active):not(.venue-hidden))) {{ display: none; }}
+    #show-extras:checked ~ .agenda .day:has(.row:not(.venue-hidden)),
+    #show-extras:checked ~ .agenda .week:has(.row:not(.venue-hidden)) {{ display: block !important; }}
     /* City filters — emitted dynamically per city present in data */
     {city_css}
 
@@ -1503,11 +1533,11 @@ _PAGE_HEAD = """<!DOCTYPE html>
     {when_css}
     /* Favoriten filter — hide rows + cards + days/weeks without is-fav */
     #f-fav:checked ~ .agenda .row:not(.is-fav),
-    #f-fav:checked ~ .agenda .day:not(:has(.row.is-fav)),
-    #f-fav:checked ~ .agenda .week:not(:has(.row.is-fav)),
+    #f-fav:checked ~ .agenda .day:not(:has(.row.is-fav:not(.venue-hidden))),
+    #f-fav:checked ~ .agenda .week:not(:has(.row.is-fav:not(.venue-hidden))),
     #f-fav:checked ~ .featured .featured-card:not(.is-fav),
     #f-fav:checked ~ .featured:not(:has(.featured-card.is-fav)) {{ display: none; }}
-    #f-fav:checked ~ .agenda:not(:has(.row.is-fav)) .filter-empty {{ display: block; }}
+    #f-fav:checked ~ .agenda:not(:has(.row.is-fav:not(.venue-hidden))) .filter-empty {{ display: block; }}
     /* Recurring-event bonus line under main meta */
     .row-recurring {{
       font-size: 12px;
