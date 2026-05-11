@@ -832,6 +832,9 @@
   venue_id_overrides:
     "Kultur- und Kommunikationszentrum Lindenbrauerei e.V.": lindenbrauerei
     "Zentrum für Internationale Lichtkunst e.V.": zil-lichtkunst-unna
+    # Same venue under two names in the data feed — collapse onto one chip.
+    "Stadthalle": kultur-in-unna-stadthalle-unna
+    "zib – Zentrum für Information und Bildung": kultur-in-unna-bibliothek-im-zib
   venue_category_hints:
     "Hellweg-Museum": museum_exhibition
     "Kunstverein Unna e.V.": museum_exhibition
@@ -843,10 +846,32 @@
     "Remise Antik-Café": other
     "arthaus:nowodworski": museum_exhibition
   skip_venue_substrings:
+    # Public-square / outdoor festivals
     - "Rund ums Rathaus"
     - "Unnaer Innenstadt"
     - "Alter Markt"
     - "Westfriedhof"
+    - "Platz der Kulturen"
+    - "Kurpark"
+    - "Kräutergarten"
+    # Random street / commerce locations
+    - "Bahnhofstraße"
+    - "Bahnhofstrasse"
+    # Hotels / restaurants used as event spaces (low cultural signal)
+    - "Ringhotel"
+    - "Hotel "
+    - "Kaminzimmer"
+    # Schools / community spaces with one-off events (clutter, not real venues)
+    - "Gymnasium"
+    - "Stadtteilzentrum"
+    - "Lerntreff"
+    - "Ankerpunkt"
+    # Rural / outlying churches that host occasional non-cultural events
+    # (Ev. Stadtkirche Unna kept — does real concerts.)
+    - "Hemmerde"
+    # Out of geographic scope (Köln events sometimes leak into Unna feed)
+    - "Köln"
+    - "Koeln"
   notes: |
     Stadt Unna's official events portal. WordPress + Tribe Events Calendar.
     ~388 events across 15+ venues. split_by_venue=true fans out into

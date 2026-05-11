@@ -277,7 +277,7 @@ def _collect_venues_by_city(
     """
     from collections import Counter as _Counter
     venue_meta = venue_meta or {}
-    # First pass — per venue_id collect venue_name distribution + cats.
+    # First pass — per venue_id collect venue_name distribution + cats + count.
     by_vid: dict[str, dict] = {}
     for e in events:
         vid = _attr(e, "venue_id") or ""
@@ -285,9 +285,10 @@ def _collect_venues_by_city(
         city = _attr(e, "city") or ""
         if not vid or not city or city == "__aggregator__":
             continue
-        bucket = by_vid.setdefault(vid, {"city": city, "names": _Counter(), "cats": set()})
+        bucket = by_vid.setdefault(vid, {"city": city, "names": _Counter(), "cats": set(), "n": 0})
         bucket["names"][vname] += 1
         bucket["cats"].add(_slug(_attr(e, "category") or "other"))
+        bucket["n"] += 1
 
     # Second pass — assign a canonical chip label to each venue_id.
     seen: dict[str, dict[str, dict]] = {}
@@ -297,17 +298,26 @@ def _collect_venues_by_city(
         chip_label = _normalize_chip_name(canonical)
         chip_id = f"{cslug}-{_css_safe(chip_label.lower())}"
         group = seen.setdefault(cslug, {}).setdefault(
-            chip_id, {"name": chip_label, "venue_ids": set(), "cats": set()}
+            chip_id, {"name": chip_label, "venue_ids": set(), "cats": set(), "n": 0}
         )
         group["venue_ids"].add(vid)
         group["cats"].update(bucket["cats"])
+        group["n"] += bucket["n"]
+
+    # Suppress chips with <2 events — they're typically venues that appear
+    # once in an aggregator feed (random street, school auditorium, etc.).
+    # The events themselves still render in the agenda; this just keeps the
+    # Häuser/Venues filter row focused on places mum can plan around.
+    MIN_EVENTS_PER_CHIP = 2
 
     out: dict[str, list[tuple[str, str, set, set]]] = {}
     for cslug, groups in seen.items():
-        out[cslug] = sorted(
-            ((cid, g["name"], g["venue_ids"], g["cats"]) for cid, g in groups.items()),
-            key=lambda t: t[1].lower(),
-        )
+        kept = [
+            (cid, g["name"], g["venue_ids"], g["cats"])
+            for cid, g in groups.items()
+            if g["n"] >= MIN_EVENTS_PER_CHIP
+        ]
+        out[cslug] = sorted(kept, key=lambda t: t[1].lower())
     return out
 
 
