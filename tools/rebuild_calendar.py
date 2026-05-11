@@ -111,7 +111,7 @@ def main() -> int:
         out_path=args.out,
         featured=featured,
         title="Was ist los in Gabis Welt",
-        header_eyebrow="Kultur in der 'Grünen Lunge'",
+        header_eyebrow="Kultur in der Grünen Lunge",
         horizon_days=args.horizon_days,
         now=datetime.now(timezone.utc),
         venue_meta=venue_meta,
