@@ -89,6 +89,8 @@ def scrape(venue_row: dict, session: Optional[requests.Session] = None) -> list[
             events = _scrape_tribe_rest(venue_row, session=session)
         elif kind == "et4_search":
             events = _scrape_et4_search(venue_row, session=session)
+        elif kind == "toubiz_api":
+            events = _scrape_toubiz_api(venue_row, session=session)
         elif kind == "unknown":
             log.info("skip %s: kind=unknown (pending onboarding)", venue_id)
             return []
@@ -764,6 +766,229 @@ _ET4_DENY_CATEGORIES = frozenset({
     "Messe",
     "Ausflug/Exkursion",   # mostly day-trip / hiking listings, not cultural
 })
+
+
+# ─── toubiz API path ─────────────────────────────────────────────────────────
+# Toubiz (mein.toubiz.de) is a tourism CMS used by Düsseldorf Marketing's
+# visitduesseldorf.de events portal. The customer-facing widget caps display
+# at 30 highlight tiles, but the underlying JSON API at
+# `/api/v1/eventDates` exposes the full programme — ~1000 future event dates
+# for Düsseldorf, paginated 50/page. Bearer token is embedded in the widget
+# bundle (unlicensed=1 indicates anonymous widget access).
+
+
+_TOUBIZ_CATEGORY_MAP = {
+    # exhibitions
+    "Ausstellung": "museum_exhibition",
+    "Kunstausstellung": "museum_exhibition",
+    "Fotografie Ausstellung": "museum_exhibition",
+    "Malerei Ausstellung": "museum_exhibition",
+    # concerts
+    "Konzert": "concert",
+    "Klassik Konzert": "concert",
+    "Jazz Konzert": "concert",
+    "Pop Konzert": "concert",
+    "Rock Konzert": "concert",
+    "Musikfestival": "concert",
+    "Chorkonzert": "concert",
+    # theatre / cabaret
+    "Theater": "theatre",
+    "Kabarett & Kleinkunst": "theatre",
+    "Comedy": "theatre",
+    "Show & Varieté": "theatre",
+    "Aufführung": "theatre",
+    # opera / musical
+    "Oper": "opera",
+    "Musical": "opera",
+    "Operette": "opera",
+    # dance
+    "Tanz": "ballet",
+    "Ballett": "ballet",
+    # talks / readings / tours (still cultural)
+    "Vortrag": "other",
+    "Lesung": "other",
+    "Talkrunde": "other",
+    "Führung": "other",
+    "Themenführung": "other",
+    # films
+    "Filmvorführung": "other",
+}
+
+# Categories explicitly OUT of scope for a cultural calendar — boat tours,
+# city walks, markets, fairs, kids/youth theatre, carnival floats, sports,
+# nightlife. The deny-list also acts as the implicit filter: any category
+# NOT in _TOUBIZ_CATEGORY_MAP gets dropped, so adding to deny is belt-and-
+# braces but useful as documentation.
+_TOUBIZ_DENY_CATEGORIES = frozenset({
+    "Schifffahrt", "Stadtrundfahrt", "Stadtführung", "Markt",
+    "Nightlife & Party", "Kinder- und Jugendtheater", "Karneval",
+    "Aktivität", "Messe", "Zirkus", "Sport", "Straßenfest",
+    "Aktionstag", "Thementag", "Weitere Veranstaltungen",
+})
+
+
+def _scrape_toubiz_api(venue_row: dict, session=None) -> list[Event]:
+    """Scrape a Toubiz tourism-CMS event API (mein.toubiz.de/api/v1/eventDates).
+
+    Config:
+      api_url:           defaults to https://mein.toubiz.de/api/v1/eventDates
+      bearer_token:      widget bearer token (extract from page-source bundle
+                         once; long-lived, no rotation observed).
+      element:           Toubiz "element" filter (e.g. "eventdmt" for Düsseldorf).
+      referer:           used as Referer + Origin header (widget client URL).
+      page_size:         default 50 (Toubiz caps at ~100 per page).
+      max_pages:         default 25 (safety cap).
+      allowed_categories: optional override — defaults to keys of
+                         _TOUBIZ_CATEGORY_MAP. Categories NOT in this set are
+                         dropped.
+      venue_id_overrides: {address.name: canonical_venue_id} to fold into
+                         existing venue rows (e.g. an Ausstellung at
+                         "Kunstpalast" maps to our `kunstpalast` venue id).
+      skip_venue_substrings: drop events whose address.name contains any.
+    """
+    sess = session or requests
+    api_url = venue_row.get("api_url", "https://mein.toubiz.de/api/v1/eventDates")
+    bearer = venue_row.get("bearer_token")
+    if not bearer:
+        log.warning("%s: toubiz_api missing bearer_token", venue_row["id"])
+        return []
+    element = venue_row.get("element")
+    if not element:
+        log.warning("%s: toubiz_api missing element filter", venue_row["id"])
+        return []
+    referer = venue_row.get("referer") or venue_row.get("homepage") or ""
+    page_size = int(venue_row.get("page_size", 50))
+    max_pages = int(venue_row.get("max_pages", 25))
+    allowed = set(venue_row.get("allowed_categories") or _TOUBIZ_CATEGORY_MAP.keys())
+    cat_map = venue_row.get("category_map") or _TOUBIZ_CATEGORY_MAP
+    deny_cats = set(venue_row.get("deny_categories") or _TOUBIZ_DENY_CATEGORIES)
+    vid_overrides = venue_row.get("venue_id_overrides") or {}
+    skip_substrings = [s.lower() for s in (venue_row.get("skip_venue_substrings") or [])]
+
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {bearer}",
+        "Origin": referer.rstrip("/"),
+        "Referer": referer,
+        "User-Agent": DEFAULT_HEADERS.get("User-Agent", "Mozilla/5.0"),
+    }
+
+    all_items: list[dict] = []
+    for page in range(1, max_pages + 1):
+        params = {
+            "sorting[property]": "date",
+            "unlicensed": "1",
+            "filter[clientIncludingManaged]": "current",
+            "filter[element]": element,
+            "filter[date][after]": "today",
+            "filter[date][includeOnDemand]": "1",
+            "pagination[pageSize]": str(page_size),
+            "pagination[page]": str(page),
+            "language": "de",
+        }
+        try:
+            r = sess.get(api_url, params=params, headers=headers, timeout=DEFAULT_TIMEOUT + 10)
+            r.raise_for_status()
+            data = r.json()
+        except (requests.RequestException, ValueError) as exc:
+            log.warning("%s: toubiz_api page=%d failed: %s", venue_row["id"], page, exc)
+            break
+        items = data.get("payload") or []
+        if not items:
+            break
+        all_items.extend(items)
+        # Toubiz silently caps the per-page response at ~50 even when
+        # pageSize=100 is requested, so we can't use len(items)<page_size
+        # as the stop signal. Only stop when the API returns an empty page.
+
+    log.debug("%s: toubiz_api fetched %d raw items", venue_row["id"], len(all_items))
+
+    out: list[Event] = []
+    seen: set[tuple] = set()
+    for raw in all_items:
+        ev = _toubiz_to_event(
+            raw, venue_row,
+            allowed=allowed, cat_map=cat_map, deny_cats=deny_cats,
+            vid_overrides=vid_overrides, skip_substrings=skip_substrings,
+        )
+        if ev is None:
+            continue
+        key = (ev.venue_id, ev.title, ev.start)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(ev)
+
+    log.info("%s: %d events from toubiz_api", venue_row["id"], len(out))
+    return out
+
+
+def _toubiz_to_event(
+    raw: dict, venue_row: dict,
+    allowed: set, cat_map: dict, deny_cats: set,
+    vid_overrides: dict, skip_substrings: list,
+) -> Optional[Event]:
+    """Map one Toubiz eventDates entry to a canonical Event."""
+    ev_obj = raw.get("event") or {}
+    title = (ev_obj.get("name") or "").strip()
+    if not title:
+        return None
+    if ev_obj.get("canceled"):
+        return None
+
+    raw_cat = ((ev_obj.get("category") or {}).get("name") or "").strip()
+    if raw_cat in deny_cats or raw_cat not in allowed:
+        return None
+    category = cat_map.get(raw_cat) or venue_row.get("category", "other")
+
+    # Toubiz's `date` is YYYY-MM-DD (date-only); startAt/endAt usually null
+    # because Toubiz separates "performance dates" from "specific times".
+    # That gives us a calendar-day granularity; renderer will display as
+    # all-day if no time is known.
+    date_s = raw.get("date") or raw.get("startAt")
+    if not date_s:
+        return None
+    start = _parse_one(date_s)
+    if start is None:
+        return None
+
+    # Venue resolution. locationData.address.name is the most useful field
+    # (gallery / theatre / club name). Some events lack it — fall back to
+    # the aggregator's own venue_id so they still show up on the
+    # visit-duesseldorf chip rather than vanish.
+    ld = ev_obj.get("locationData") or {}
+    addr = ld.get("address") if isinstance(ld, dict) else None
+    venue_name = ((addr or {}).get("name") or "").strip()
+    venue_lower = venue_name.lower()
+    if skip_substrings and any(s in venue_lower for s in skip_substrings):
+        return None
+
+    if venue_name and venue_name in vid_overrides:
+        venue_id = vid_overrides[venue_name]
+    elif venue_name:
+        venue_id = f"{venue_row['id']}-{_tribe_slug(venue_name)}"
+    else:
+        venue_id = venue_row["id"]
+        venue_name = venue_row.get("display_name") or venue_row["name"]
+
+    city = ((addr or {}).get("city") or venue_row.get("city") or "").strip()
+
+    # Keyword overlay still beats the venue-level guess.
+    category = _infer_category(title, venue_row, stage_default=category)
+
+    return Event(
+        title=title,
+        start=start,
+        end=None,
+        venue_id=venue_id,
+        venue_name=venue_name or venue_row["name"],
+        city=city,
+        category=category,
+        url=venue_row.get("calendar_url", venue_row.get("homepage", "#")),
+        description=None,
+        source=venue_row["id"],
+        audience=_infer_audience(title),
+    )
 
 
 # ─── static path ─────────────────────────────────────────────────────────────

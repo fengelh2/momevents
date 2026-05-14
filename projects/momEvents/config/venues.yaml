@@ -541,25 +541,30 @@
   city: Düsseldorf
   category: mixed
   homepage: https://www.visitduesseldorf.de
-  calendar_url: https://www.visitduesseldorf.de/erleben/veranstaltungen
-  kind: playwright_html_list
+  calendar_url: https://www.visitduesseldorf.de/erleben/veranstaltungen/veranstaltungskalender
+  kind: toubiz_api
   source_priority: 5
-  locale: de-DE
-  wait_for_selector: ".tb-teaser"
-  selectors:
-    item: "a.tb-teaser"
-    title: ".tb-teaser__title"
-    date: ".tb-teaser-date"
-    detail_link: "@href"
+  api_url: https://mein.toubiz.de/api/v1/eventDates
+  bearer_token: "$2y$10$kZQ3wBiSXci74W7d4DEO/.OF9eaLwCvNYCvj94i00O89NaegbGy5W"
+  element: eventdmt
+  referer: https://www.visitduesseldorf.de/
+  page_size: 100
+  max_pages: 25
   notes: |
-    Stadt Düsseldorf's official events portal. Built on Toubiz tourism CMS
-    (mein.toubiz.de) with a custom <toubiz-widget> web-component that
-    renders events purely client-side. Static HTML has the widget shell
-    but zero event data — must use runtime Playwright to render.
-    ~30 highlight events visible after scroll. Onboarded 2026-05-11 once
-    the playwright_html_list parser shipped. Sport / non-cultural events
-    fall through title-keyword inference; consider adding a deny pattern
-    if Sport titles clutter (Beachvolleyball etc.).
+    Stadt Düsseldorf's events portal. The customer-facing /veranstaltungen
+    page caps at 30 highlight teasers — the underlying Toubiz JSON API at
+    mein.toubiz.de/api/v1/eventDates exposes the full programme (~1000
+    future event dates). Bearer token is the widget's anon API key,
+    extracted from the page bundle (long-lived; re-probe if it stops
+    returning 200).
+
+    The eventdmt element + clientIncludingManaged=current filter scopes
+    to Düsseldorf Marketing's curated set. Cultural categories
+    (Konzert/Klassik/Jazz/Ausstellung/Theater/Oper/Ballett/Vortrag/
+    Lesung/etc.) pass through _TOUBIZ_CATEGORY_MAP; tourism/markets/
+    sport/karneval drop via deny-list. Venue names come from
+    locationData.address.name when present; events without a venue
+    address roll up under the visit-duesseldorf chip.
 
 - id: kunstpalast
   name: Kunstpalast
