@@ -1366,11 +1366,17 @@ def _parse_date_range(text: str, explicit_format: Optional[str] = None,
     for sep in [" – ", " — ", " - ", "–", "—", " bis ", " – bis "]:
         if sep in text:
             left, right = text.split(sep, 1)
-            l, r = _parse_with(left.strip(), right.strip(), date_prefer)
+            left_s, right_s = left.strip(), right.strip()
+            # If left is just a day ("19." or "19"), inherit month/year from the
+            # right side — otherwise dateparser silently defaults to today's
+            # month (Maschinenhaus "19.–25. Juli 2026" → 2026-05-19 bug).
+            if re.match(r"^\d{1,2}\.?$", left_s):
+                left_s = f"{left_s.rstrip('.')}. {right_s.lstrip('0123456789. ')}"
+            l, r = _parse_with(left_s, right_s, date_prefer)
             if l and r:
                 # Auto-fallback: end < start means no-year + future-bias bug.
                 if r < l:
-                    l2, r2 = _parse_with(left.strip(), right.strip(), "current_period")
+                    l2, r2 = _parse_with(left_s, right_s, "current_period")
                     if l2 and r2 and r2 >= l2:
                         return (l2, r2)
                 return (l, r)
