@@ -101,6 +101,7 @@
     date_end: ".last-occurrence"
     detail_link: "h2.node__title a"
     description: ".field-subtitle .field__content"
+  accept_drop_rate: 0.6       # untitled placeholder cards for unannounced shows
   notes: |
     Drupal "node" CMS. Date is split into .first-occurrence / .last-occurrence
     div pair. /de/ausstellungen lists current + just-opened exhibitions
@@ -127,6 +128,7 @@
     date_end: ".last-occurrence"
     detail_link: "h2.node__title a"
     description: ".field-subtitle .field__content"
+  accept_drop_rate: 0.6       # same placeholder pattern as primary /de/ausstellungen
   notes: |
     Second listing page — upcoming/future exhibitions not yet open. Adding
     a sibling venue config (rather than multi-URL support) follows the
@@ -147,10 +149,12 @@
     title: "h3.card-title"
     detail_link: "a"
   date_from_title: true
+  accept_drop_rate: 0.5       # permanent-collection cards have no closing date
   notes: |
     Custom CMS. Exhibition entries cram title + venue + closing-date phrase
     into <h3.card-title>; we extract "Bis 10. Januar 2027" via regex from the
-    title and treat the rest as the title (first line).
+    title and treat the rest as the title (first line). Permanent-collection
+    entries have no closing date and are dropped (legit, hence accept_drop_rate).
 
 # Ruhr Museum's full programme (tours, lectures like the Sven Plöger climate
 # talk, family events) lives on a separate URL with TYPO3 calendarize markup.
@@ -167,14 +171,17 @@
   source_priority: 0
   selectors:
     item: "div.calendarize div.state-default"
-    title: "h3"
-    date: "div.mt-3"
+    title: "h2, h3"           # "Heute" block uses h3, "Folgende Termine" uses h2
+    date: "div.bb-4, div.mt-3"  # bb-4 wraps date+location for upcoming; mt-3 for today
     detail_link: "a"
   date_extract_regex: '(?:Mo|Di|Mi|Do|Fr|Sa|So|Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag)\.?\s+\d{1,2}\.\d{1,2}\.?\s*\d{1,2}:\d{2}'
   notes: |
     TYPO3 calendarize extension. Each .state-default is one occurrence.
-    div.mt-3 returns "<location>... <weekday> DD.MM. HH:MM - HH:MM" so we
-    regex out just the "<weekday> DD.MM. HH:MM" portion before dateparser.
+    Page renders two blocks under one selector: "Heute" (h3 title, div.mt-3
+    holding "<location><br><weekday> DD.MM. HH:MM") and "Folgende Termine"
+    (h2 title, div.bb-4 wrapping "<weekday> DD.MM. HH:MM" and location).
+    Comma selectors match both layouts; date_extract_regex isolates just
+    the "<weekday> DD.MM. HH:MM" portion before dateparser sees it.
     No year in source — dateparser infers from PREFER_DATES_FROM=future.
     Recurring events (Doppelschicht tours) get rolled up by the merger.
 
@@ -198,6 +205,7 @@
     - "(?i)^Museum closed"
     - "(?i)^The museum will be closed"
     - "(?i)^Museum geschlossen"
+  accept_drop_rate: 0.55      # closure-notice cards are intentional skips
   notes: |
     /programm 404s — actual exhibitions live under /essen/exhibitions/current-exhibitions.
     Site is multilingual; the canonical URL serves English. Date format is
@@ -244,7 +252,7 @@
   kind: html_list
   source_priority: 0
   selectors:
-    item: "div.bspace.fliesstext"
+    item: "div.bspace.fliesstext:not(:has(a.nurAnker))"
     title: "h2.detail"
     date: "h3.detail"
   date_extract_regex: '\d{1,2}\.\d{1,2}\.\d{4}'
@@ -255,6 +263,8 @@
     Original alte-synagoge.essen.de redirects to essen.de/leben/kultur_/.
     Date prose varies ("Freitag, 08.05.2026, 19 Uhr", "23.09.2025 bis 30.05.2026",
     "Dienstags, 12-14 Uhr"). date_find_all picks first/last DD.MM.YYYY in text;
+    item selector excludes anchor-only placeholder divs (<a class="nurAnker">) —
+    nav anchors that essen.de inserts between events.
     Pop-up Café (recurring weekly, no concrete date) is filtered out.
 
 - id: theater-courage
@@ -560,7 +570,7 @@
   kind: html_list
   source_priority: 0
   selectors:
-    item: "ul.kunstpalast-tile-list > li.splide__slide"
+    item: "section#Vorschau ul.kunstpalast-tile-list > li.splide__slide"
     title: "div.kunstpalast-tile-list-item-content-text h3"
     detail_link: "div.kunstpalast-tile-list-item-image a"
   date_from_title: true
@@ -569,6 +579,9 @@
     Captures the UPCOMING-exhibition tile carousels. Current exhibitions live
     in a separate "teaser-events" section (see kunstpalast-current below).
     Date is concatenated inside the h3 title, e.g. "DIE GROSSE 5.7.–9.8.2026".
+    Selector is scoped to section#Vorschau — the page also contains 8+
+    archive-year tile carousels (49 archive entries reaching back to 2019)
+    that would otherwise be selected and silently dropped on date-parse.
 
 # Kunstpalast also features ~4 current exhibitions in a different "teaser-events"
 # section per page — these are the headliners (Monet · Cézanne · Matisse, etc.)

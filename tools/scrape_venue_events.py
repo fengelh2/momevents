@@ -1053,8 +1053,13 @@ def _scrape_html_list(venue_row: dict, session=None) -> list[Event]:
     # on a non-standard format (e.g. "27. Febr. 2026" — see Folkwang 2026-05).
     # Below the threshold the chip_audit.md log is enough; above, we want a
     # WARNING visible in the rebuild summary so the operator investigates.
-    DROP_WARN_THRESHOLD = 0.30   # >30% of selected items dropped
-    MIN_ITEMS_FOR_WARN = 3       # don't warn on tiny pages
+    #
+    # Some venues legitimately drop a chunk of selected items (closure-notice
+    # cards on Red Dot, untitled placeholder rows on Folkwang, permanent-
+    # collection entries on Ruhr Museum). Those set `accept_drop_rate: 0.5`
+    # in venues.yaml to raise the warn threshold for that venue alone.
+    DROP_WARN_THRESHOLD = float(venue_row.get("accept_drop_rate", 0.30))
+    MIN_ITEMS_FOR_WARN = 3
     if total_items >= MIN_ITEMS_FOR_WARN and total_items > len(out):
         dropped = total_items - len(out)
         drop_rate = dropped / total_items
