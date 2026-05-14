@@ -1370,6 +1370,14 @@ def _parse_one(text: str, explicit_format: Optional[str] = None,
     if not text:
         return None
 
+    # Normalize non-standard German month abbreviations dateparser doesn't
+    # recognize. Folkwang prints "Febr." (4-letter, between "Feb." and
+    # "Februar") which silently fails. Other sites sometimes use "Janu.",
+    # "Juli." with trailing dot variants. Map them to dateparser-friendly
+    # forms BEFORE the main parse.
+    text = re.sub(r"\bJanu\.", "Januar", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bFebr\.", "Februar", text, flags=re.IGNORECASE)
+
     if explicit_format:
         try:
             dt = datetime.strptime(text, explicit_format)

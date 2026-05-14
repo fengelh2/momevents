@@ -103,8 +103,36 @@
     description: ".field-subtitle .field__content"
   notes: |
     Drupal "node" CMS. Date is split into .first-occurrence / .last-occurrence
-    div pair. Confirmed 2026-05-09 with 7 cards visible.
+    div pair. /de/ausstellungen lists current + just-opened exhibitions
+    (~4-7 with titles, plus unannounced placeholders without titles).
     /veranstaltungen has talks/film/concerts; not yet onboarded.
+
+# Same physical venue as museum-folkwang — Drupal CMS splits "current"
+# (above) from "upcoming" (/de/ausblick) on separate URLs. Same selectors;
+# the chip system merges both venue_ids onto one "Museum Folkwang" chip
+# via display_name normalization (just like kunstpalast / kunstpalast-current).
+- id: museum-folkwang-ausblick
+  name: Museum Folkwang
+  display_name: Museum Folkwang
+  city: Essen
+  category: museum_exhibition
+  homepage: https://www.museum-folkwang.de
+  calendar_url: https://www.museum-folkwang.de/de/ausblick
+  kind: html_list
+  source_priority: 0
+  selectors:
+    item: "article.node--type-event"
+    title: "h2.node__title a"
+    date_start: ".first-occurrence"
+    date_end: ".last-occurrence"
+    detail_link: "h2.node__title a"
+    description: ".field-subtitle .field__content"
+  notes: |
+    Second listing page — upcoming/future exhibitions not yet open. Adding
+    a sibling venue config (rather than multi-URL support) follows the
+    kunstpalast / kunstpalast-current precedent. ~5 upcoming exhibitions
+    listed here on 2026-05-14 that were entirely missed by the
+    /de/ausstellungen scrape alone.
 
 - id: ruhr-museum
   name: Ruhr Museum (Zollverein)
