@@ -659,13 +659,16 @@
   selectors:
     item: "div.kombiBox07.row"
     title: "div.text h2"
-    date: "div.text p strong"
+    date: "div.text"
     detail_link: "div.text a.blocked-link"
-  date_extract_regex: '\d{1,2}\.\s?(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z]*\s?20\d{2}\s*[–—-]\s*\d{1,2}\.\s?(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z]*\s?20\d{2}'
+  date_extract_regex: '(?:\d{1,2}\.\s?(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z.]*\s?(?:20\d{2})?\s*[–—-]\s*)?\d{1,2}\.\s?(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z.]*\s?20\d{2}|\d{1,2}\.\d{1,2}\.20\d{2}'
   notes: |
     URL changed from /programm to /ausstellungen. Photography museum, ~3
-    exhibitions at a time. Date is German prose ("17. September 2026 –
-    23. Mai 2027") inside <strong>; regex extracts the start–end pair.
+    exhibitions at a time. Date format varies: range "17. September 2026
+    – 23. Mai 2027", range with year only on right "5. Juli – 9. August
+    2026", or single "5.6.2026" (Eröffnung). Selector grabs whole div.text;
+    regex picks first range it sees (optional left side without year), else
+    falls back to a single DD.MM.YYYY.
 
 - id: hetjens
   name: Hetjens — Deutsches Keramikmuseum
@@ -971,7 +974,7 @@
   source_priority: 0
   selectors:
     item: "div.event"
-    title: "div.event h2, div.event h3"
+    title: "div.event h4"
     date: "div.datecol"
     detail_link: "div.event a"
   date_extract_regex: '\d{1,2}\.?\s+(?:Jan|Feb|M[äa]rz|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)[a-z.]*'
@@ -980,6 +983,8 @@
     Date split across nested divs (wday + day + month abbrev); regex extracts
     "DD Mai" pattern from combined .datecol text. Year inferred from
     PREFER_DATES_FROM=future. Sub-domain dommusik.paulusdom.de (not www).
+    Titles render in <h4> (not h2/h3); earlier selector matched a stray
+    <h3> in the description column and missed 6 of 7 events.
 
 - id: kunsthalle-muenster
   name: Kunsthalle Münster

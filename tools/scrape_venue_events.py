@@ -1408,6 +1408,14 @@ def _parse_one(text: str, explicit_format: Optional[str] = None,
     text = re.sub(r"\bJanu\.", "Januar", text, flags=re.IGNORECASE)
     text = re.sub(r"\bFebr\.", "Februar", text, flags=re.IGNORECASE)
 
+    # Plain "DD.MM" / "DD.MM." (no year) is parsed by dateparser as the TIME
+    # HH:MM with today's date — Recklinghausen TYPO3 venues print dates this
+    # way ("17.05.") so the whole calendar collapsed onto today. Append the
+    # current year explicitly; PREFER_DATES_FROM=future rolls past dates
+    # forward to next year as needed.
+    if re.fullmatch(r"\d{1,2}\.\d{1,2}", text):
+        text = f"{text}.{datetime.now(timezone.utc).year}"
+
     if explicit_format:
         try:
             dt = datetime.strptime(text, explicit_format)
