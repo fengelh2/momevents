@@ -497,6 +497,32 @@
     DD.M.); dateparser with DATE_ORDER=DMY infers the current year.
     Onboarded 2026-05-11 (was previously placeholder kind=unknown).
 
+- id: visitduesseldorf
+  name: Stadt Düsseldorf (visitduesseldorf.de city-wide aggregator)
+  display_name: visit-duesseldorf
+  city: Düsseldorf
+  category: mixed
+  homepage: https://www.visitduesseldorf.de
+  calendar_url: https://www.visitduesseldorf.de/erleben/veranstaltungen
+  kind: playwright_html_list
+  source_priority: 5
+  locale: de-DE
+  wait_for_selector: ".tb-teaser"
+  selectors:
+    item: "a.tb-teaser"
+    title: ".tb-teaser__title"
+    date: ".tb-teaser-date"
+    detail_link: "@href"
+  notes: |
+    Stadt Düsseldorf's official events portal. Built on Toubiz tourism CMS
+    (mein.toubiz.de) with a custom <toubiz-widget> web-component that
+    renders events purely client-side. Static HTML has the widget shell
+    but zero event data — must use runtime Playwright to render.
+    ~30 highlight events visible after scroll. Onboarded 2026-05-11 once
+    the playwright_html_list parser shipped. Sport / non-cultural events
+    fall through title-keyword inference; consider adding a deny pattern
+    if Sport titles clutter (Beachvolleyball etc.).
+
 - id: kunstpalast
   name: Kunstpalast
   city: Düsseldorf
