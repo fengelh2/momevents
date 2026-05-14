@@ -160,7 +160,8 @@ def _scrape_detail_pages(venue_row: dict, session=None) -> list[Event]:
                 break
         if not title:
             continue
-        start = _parse_one(date_text, venue_row.get("date_format"))
+        start = _parse_one(date_text, venue_row.get("date_format"),
+                           date_prefer=venue_row.get("date_prefer", "future"))
         if start is None:
             log.debug("  %s: failed to parse date %r", url, date_text)
             continue
@@ -1003,16 +1004,16 @@ def _assemble_from_html_item(
             time_t = _select_text(item, sel.get("date_time")) if sel.get("date_time") else ""
             yr = ctx_year or datetime.now(timezone.utc).year
             date_text = f"{day_t}. {month_ctx} {yr} {time_t}".strip()
-            start = _parse_one(date_text, venue_row.get("date_format"))
+            start = _parse_one(date_text, venue_row.get("date_format"), date_prefer=venue_row.get("date_prefer", "future"))
     if start is not None:
         pass  # month_context mode already produced a start
     elif sel.get("date_start") or sel.get("date_end"):
         start_t = _select_text(item, sel.get("date_start"))
         end_t = _select_text(item, sel.get("date_end"))
         if start_t:
-            start = _parse_one(start_t, venue_row.get("date_format"))
+            start = _parse_one(start_t, venue_row.get("date_format"), date_prefer=venue_row.get("date_prefer", "future"))
         if end_t:
-            end = _parse_one(end_t, venue_row.get("date_format"))
+            end = _parse_one(end_t, venue_row.get("date_format"), date_prefer=venue_row.get("date_prefer", "future"))
         date_text = f"{start_t} – {end_t}".strip(" –")
     elif venue_row.get("date_from_title"):
         mode = venue_row.get("date_from_title_mode", "single")
@@ -1035,8 +1036,8 @@ def _assemble_from_html_item(
                     yr = re.search(r"(\d{4})", end_str)
                     if yr:
                         start_str = start_str + yr.group(1)
-                start = _parse_one(start_str, venue_row.get("date_format"))
-                end = _parse_one(end_str, venue_row.get("date_format"))
+                start = _parse_one(start_str, venue_row.get("date_format"), date_prefer=venue_row.get("date_prefer", "future"))
+                end = _parse_one(end_str, venue_row.get("date_format"), date_prefer=venue_row.get("date_prefer", "future"))
         else:
             date_pattern = venue_row.get(
                 "date_from_title_pattern",
@@ -1049,11 +1050,11 @@ def _assemble_from_html_item(
                 title = re.sub(re.escape(date_text), "", haystack).strip(" -–—,.\n\t")
             if date_text:
                 if re.match(r"^(?:Bis|bis|Noch bis|noch bis)\b", date_text):
-                    end = _parse_one(date_text, venue_row.get("date_format"))
+                    end = _parse_one(date_text, venue_row.get("date_format"), date_prefer=venue_row.get("date_prefer", "future"))
                     today = datetime.now(timezone.utc)
                     start = today.replace(hour=0, minute=0, second=0, microsecond=0)
                 else:
-                    start = _parse_one(date_text, venue_row.get("date_format"))
+                    start = _parse_one(date_text, venue_row.get("date_format"), date_prefer=venue_row.get("date_prefer", "future"))
     else:
         date_text = _select_text(item, sel.get("date"))
         # Optional pre-extract: pull a clean date substring out of a noisy
@@ -1073,7 +1074,8 @@ def _assemble_from_html_item(
                 m = re.search(extract_re, date_text)
                 if m:
                     date_text = m.group(0)
-        start, end = _parse_date_range(date_text, venue_row.get("date_format"))
+        start, end = _parse_date_range(date_text, venue_row.get("date_format"),
+                                        date_prefer=venue_row.get("date_prefer", "future"))
 
     if start is None:
         log.debug("%s: failed to parse date %r (raw_title=%r)", venue_row["id"], date_text, raw_title)
@@ -1164,19 +1166,35 @@ def _select_attr(node, selector: Optional[str], attr: str) -> str:
 # ─── date parsing ────────────────────────────────────────────────────────────
 
 
-_DATE_PARSER_KW = dict(
-    languages=["de", "en"],
-    settings={
-        "PREFER_DATES_FROM": "future",
-        # German convention is DD.MM.YYYY. Without this, dateparser interprets
-        # "12.3.2026" as December 3 (US MM.DD) instead of March 12 — causing
-        # exhibitions to appear months later than they actually open.
-        "DATE_ORDER": "DMY",
-    },
-)
+_DATE_PARSER_LANGS = ["de", "en"]
+_DATE_PARSER_BASE_SETTINGS = {
+    # German convention is DD.MM.YYYY. Without this, dateparser interprets
+    # "12.3.2026" as December 3 (US MM.DD) instead of March 12 — causing
+    # exhibitions to appear months later than they actually open.
+    "DATE_ORDER": "DMY",
+}
 
 
-def _parse_date_range(text: str, explicit_format: Optional[str] = None) -> tuple[Optional[datetime], Optional[datetime]]:
+def _date_parser_kw(date_prefer: str = "future") -> dict:
+    """Build dateparser kwargs with the configured PREFER_DATES_FROM mode.
+
+    Default is 'future' — for upcoming-events scraping, missing-year dates
+    should resolve to the next future occurrence. 'current_period' is the
+    auto-fallback for date ranges where future-bias produces end < start
+    (e.g. "16. April bis 5. Juli" parsed today resolves to start=2027/end=2026).
+    """
+    return {
+        "languages": _DATE_PARSER_LANGS,
+        "settings": {**_DATE_PARSER_BASE_SETTINGS, "PREFER_DATES_FROM": date_prefer},
+    }
+
+
+# Back-compat name — old callers expect this.
+_DATE_PARSER_KW = _date_parser_kw("future")
+
+
+def _parse_date_range(text: str, explicit_format: Optional[str] = None,
+                       date_prefer: str = "future") -> tuple[Optional[datetime], Optional[datetime]]:
     """Parse a German date string, possibly a range, into (start, end).
 
     Handles patterns like:
@@ -1186,36 +1204,52 @@ def _parse_date_range(text: str, explicit_format: Optional[str] = None) -> tuple
         "14.05.2026 — 30.06.2026"
         "ab 18.05.2026"
         "noch bis 17.08.2026"
+        "16. April bis 5. Juli"  (no year → auto-fallback handles this)
 
     Returns tz-aware datetimes (Europe/Berlin → UTC). end is None for single-day events.
+
+    Auto-fallback: if a parsed range produces end < start (almost always means
+    no-year input + PREFER_DATES_FROM=future flipped the start to next year),
+    retry the whole range with PREFER_DATES_FROM='current_period'.
     """
     if not text:
         return (None, None)
     text = text.strip()
 
+    def _parse_with(left_text: str, right_text: str, prefer: str):
+        return (
+            _parse_one(left_text, explicit_format, date_prefer=prefer),
+            _parse_one(right_text, explicit_format, date_prefer=prefer),
+        )
+
     # Range patterns — try a few separators
     for sep in [" – ", " — ", " - ", "–", "—", " bis ", " – bis "]:
         if sep in text:
             left, right = text.split(sep, 1)
-            l = _parse_one(left.strip(), explicit_format)
-            r = _parse_one(right.strip(), explicit_format)
+            l, r = _parse_with(left.strip(), right.strip(), date_prefer)
             if l and r:
+                # Auto-fallback: end < start means no-year + future-bias bug.
+                if r < l:
+                    l2, r2 = _parse_with(left.strip(), right.strip(), "current_period")
+                    if l2 and r2 and r2 >= l2:
+                        return (l2, r2)
                 return (l, r)
 
     # Compact range "14.05.–30.06.2026" (no spaces, en-dash with year only on right)
     m = re.match(r"^(\d{1,2}\.\d{1,2}\.)[–—-](\d{1,2}\.\d{1,2}\.\d{4})$", text)
     if m:
         l_str = m.group(1) + m.group(2).split(".")[-1]   # tack year on
-        l = _parse_one(l_str, explicit_format)
-        r = _parse_one(m.group(2), explicit_format)
+        l = _parse_one(l_str, explicit_format, date_prefer=date_prefer)
+        r = _parse_one(m.group(2), explicit_format, date_prefer=date_prefer)
         if l and r:
             return (l, r)
 
-    single = _parse_one(text, explicit_format)
+    single = _parse_one(text, explicit_format, date_prefer=date_prefer)
     return (single, None)
 
 
-def _parse_one(text: str, explicit_format: Optional[str] = None) -> Optional[datetime]:
+def _parse_one(text: str, explicit_format: Optional[str] = None,
+                date_prefer: str = "future") -> Optional[datetime]:
     text = text.strip().rstrip(".")
     if not text:
         return None
@@ -1243,7 +1277,7 @@ def _parse_one(text: str, explicit_format: Optional[str] = None) -> Optional[dat
         if text.lower().startswith(prefix):
             text = text[len(prefix):]
 
-    parsed = dateparser.parse(text, **_DATE_PARSER_KW)
+    parsed = dateparser.parse(text, **_date_parser_kw(date_prefer))
     if parsed is None:
         return None
     if parsed.tzinfo is None:

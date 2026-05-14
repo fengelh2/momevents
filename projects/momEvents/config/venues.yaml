@@ -431,20 +431,23 @@
   city: Münster
   category: theatre
   homepage: https://www.variete.de/muenster/
-  kind: static
+  calendar_url: https://www.variete.de/muenster/programm
+  kind: html_list
   source_priority: 0
-  static_events:
-    - title: "Deluxe"
-      start: 2026-04-16
-      end: 2026-07-05
-      detail_url: https://www.variete.de/muenster/programm/
-      description: "Aktuelle Show im GOP Varieté-Theater Münster — 'Deluxe' (16. April bis 5. Juli)."
+  selectors:
+    item: 'div.show-wrap.row[data-class*="Münster"]'
+    title: '.btn-show > a'
+    date: '.info'
+    detail_link: '.btn-show > a'
   notes: |
     Sister to gop-essen. variete.de/muenster/programm lists 1 active
-    production at a time. Date format on site is "16. April bis 5. Juli"
-    (no year) which is hard for dateparser given current-date-past-April-16
-    bias; using static config instead. Refresh manually when the production
-    changes (check the site). Added 2026-05-11.
+    production at a time. Date format e.g. "16. April bis 5. Juli" (no
+    year). _parse_date_range's auto-fallback handles this: when the
+    naive future-biased parse produces end < start (April→2027 vs
+    July→2026), the parser retries with PREFER_DATES_FROM=current_period
+    and recovers start=2026-04-16, end=2026-07-05. No per-venue override
+    needed. Onboarded 2026-05-11; switched from static to html_list once
+    the auto-fallback shipped.
 
 # Museum Domschatz Essen — closed for renovation through 18 June 2026. Static
 # notice keeps it visible so mum knows the closure status; replace once the
