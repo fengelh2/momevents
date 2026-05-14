@@ -973,7 +973,16 @@ def _toubiz_to_event(
         venue_id = venue_row["id"]
         venue_name = venue_row.get("display_name") or venue_row["name"]
 
-    city = ((addr or {}).get("city") or venue_row.get("city") or "").strip()
+    # City: Toubiz address.city occasionally includes a district suffix
+    # ("Düsseldorf Gerresheim", "Düsseldorf-Bilk") which would otherwise spawn
+    # a separate city section in the calendar. Fold any address.city that
+    # starts with the venue's configured city back to the configured city.
+    addr_city = ((addr or {}).get("city") or "").strip()
+    base_city = (venue_row.get("city") or "").strip()
+    if addr_city and base_city and addr_city.lower().startswith(base_city.lower()):
+        city = base_city
+    else:
+        city = addr_city or base_city
 
     # Trust Toubiz's source category — skip the keyword overlay. Empirical
     # false positives we saw: opera title "Lulu" matching "Lulu Simon" (a
