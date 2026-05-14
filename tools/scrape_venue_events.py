@@ -1013,6 +1013,7 @@ def _scrape_html_list(venue_row: dict, session=None) -> list[Event]:
     urls = _paginated_urls(venue_row)
 
     out: list[Event] = []
+    total_items = 0   # selector matched this many across all pages
     for url, ctx_year in urls:
         try:
             resp = sess.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
@@ -1033,6 +1034,7 @@ def _scrape_html_list(venue_row: dict, session=None) -> list[Event]:
                 month_ctx = mc_el.get_text(" ", strip=True)
 
         items = soup.select(item_sel)
+        total_items += len(items)
         log.debug("%s [%s]: matched %d items", venue_row["id"], url[-30:], len(items))
 
         prev_day = None  # for date_day_carry_forward
@@ -1045,6 +1047,23 @@ def _scrape_html_list(venue_row: dict, session=None) -> list[Event]:
             )
             if ev is not None:
                 out.append(ev)
+
+    # Surface high item-to-event drop rates. A scraper that selects 9 items
+    # but only emits 3 events almost always means silent date-parse failure
+    # on a non-standard format (e.g. "27. Febr. 2026" — see Folkwang 2026-05).
+    # Below the threshold the chip_audit.md log is enough; above, we want a
+    # WARNING visible in the rebuild summary so the operator investigates.
+    DROP_WARN_THRESHOLD = 0.30   # >30% of selected items dropped
+    MIN_ITEMS_FOR_WARN = 3       # don't warn on tiny pages
+    if total_items >= MIN_ITEMS_FOR_WARN and total_items > len(out):
+        dropped = total_items - len(out)
+        drop_rate = dropped / total_items
+        if drop_rate > DROP_WARN_THRESHOLD:
+            log.warning(
+                "DROP: %s selected %d items, emitted only %d (%.0f%% dropped) "
+                "— likely silent date-parse failure or selector mismatch",
+                venue_row["id"], total_items, len(out), drop_rate * 100,
+            )
     return out
 
 
