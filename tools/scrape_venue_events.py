@@ -801,9 +801,11 @@ _TOUBIZ_CATEGORY_MAP = {
     "Oper": "opera",
     "Musical": "opera",
     "Operette": "opera",
-    # dance
-    "Tanz": "ballet",
+    # dance: ballet narrowly, generic dance loosely → "other"
+    # (Tanz covers tap/jazz/contemporary/swing/dance-galas as well as ballet —
+    # too generic to commit to ballet without title-level confirmation.)
     "Ballett": "ballet",
+    "Tanz": "other",
     # talks / readings / tours (still cultural)
     "Vortrag": "other",
     "Lesung": "other",
@@ -973,8 +975,12 @@ def _toubiz_to_event(
 
     city = ((addr or {}).get("city") or venue_row.get("city") or "").strip()
 
-    # Keyword overlay still beats the venue-level guess.
-    category = _infer_category(title, venue_row, stage_default=category)
+    # Trust Toubiz's source category — skip the keyword overlay. Empirical
+    # false positives we saw: opera title "Lulu" matching "Lulu Simon" (a
+    # pop singer in Madison Beer's support act), ballet keyword "Tanz"
+    # matching a Lesung titled "Tanz auf dem Vulkan". Source tags are
+    # human-curated and reliable; the overlay does more harm than good
+    # at aggregator scale.
 
     return Event(
         title=title,
