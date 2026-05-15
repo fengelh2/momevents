@@ -962,8 +962,10 @@ def _toubiz_to_event(
     addr = ld.get("address") if isinstance(ld, dict) else None
     venue_name = ((addr or {}).get("name") or "").strip()
     venue_lower = venue_name.lower()
-    if skip_substrings and any(s in venue_lower for s in skip_substrings):
-        return None
+    # skip_venue_substrings: keep the event but fold it under the aggregator's
+    # rollup chip, dropping the noisy corporate/restaurant/hotel sub-chip.
+    if skip_substrings and any(s.lower() in venue_lower for s in skip_substrings):
+        venue_name = ""
 
     if venue_name and venue_name in vid_overrides:
         venue_id = vid_overrides[venue_name]

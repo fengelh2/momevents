@@ -550,6 +550,34 @@
   referer: https://www.visitduesseldorf.de/
   page_size: 100
   max_pages: 25
+  # Drop non-cultural venue chips that show up because some Düsseldorf
+  # cultural events happen to be hosted by corporates/banks/restaurants.
+  # The events themselves stay (under the visit-duesseldorf rollup); only
+  # the venue chip is suppressed.
+  skip_venue_substrings:
+    - "Sparda"
+    - "Sparkasse"
+    - "Stadtsparkasse"
+    - "Ringofen Ziegelei"
+    - "Secret 6th"
+    - "McKinsey"
+    - "sipgate"
+    - "Schön Klinik"
+    - "Adina"
+    - "Tribe Hotel"
+    - "The Wellem"
+    - "Hofmanns"
+    - "Hase & Igel"
+    - "Em Pöötzke"
+    - "Elona Caffee"
+    - "Fourty Four"
+    - "Mediadesign"
+    - "Apartment Hotel"
+    - "Bürgerhaus"
+    - "Pavillon"
+    - "Bootshaus Nautic"
+    - "Freibad"
+    - "Adina"
   notes: |
     Stadt Düsseldorf's events portal. The customer-facing /veranstaltungen
     page caps at 30 highlight teasers — the underlying Toubiz JSON API at
