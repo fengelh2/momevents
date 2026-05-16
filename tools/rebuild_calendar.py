@@ -15,9 +15,12 @@ prior run report (TODO: trend tracking).
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import re
 import sys
-from datetime import datetime, timezone
+import unicodedata
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -31,6 +34,75 @@ import render_events_html  # noqa: E402
 import scrape_venue_events  # noqa: E402
 
 log = logging.getLogger("rebuild_calendar")
+
+
+SEEN_EVENTS_PATH = REPO_ROOT / "projects/momEvents/data/seen_events.json"
+# Events get a NEU badge in the renderer if first_seen >= today - SEEN_FRESH_DAYS.
+SEEN_FRESH_DAYS = 14
+# Bootstrap: on first run (empty state file), seed every existing event as
+# already-seen with this offset so nothing is flagged as new.
+SEEN_BOOTSTRAP_OFFSET_DAYS = 30
+
+
+def _event_seen_key(ev) -> str:
+    """Stable identity for an event across rebuilds — venue + normalised title + date.
+
+    Matches the merger's dedup tuple so a recurring show keeps the same key
+    even when title or time vary slightly.
+    """
+    title = (ev.title or "").lower().strip()
+    title = re.sub(r"[^\w\s]", " ", unicodedata.normalize("NFKC", title), flags=re.UNICODE)
+    title = re.sub(r"\s+", " ", title).strip()
+    start_date = ev.start.date().isoformat() if ev.start else ""
+    return f"{ev.venue_id}|{title}|{start_date}"
+
+
+def _stamp_first_seen(events: list, state_path: Path) -> dict:
+    """Load seen-events state, stamp new keys with today, return updated state.
+
+    Side effect: mutates each event's `first_seen` field to its ISO date.
+    Writes the updated state back to disk. On first ever run (empty state),
+    every current event is treated as already-seen by SEEN_BOOTSTRAP_OFFSET_DAYS
+    days so nothing gets the NEU badge on day one.
+    """
+    today_iso = date.today().isoformat()
+    bootstrap_iso = (date.today() - timedelta(days=SEEN_BOOTSTRAP_OFFSET_DAYS)).isoformat()
+    state: dict[str, str] = {}
+    try:
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("seen_events.json unreadable, treating as empty: %s", exc)
+        state = {}
+
+    first_run = not state
+    keys_now = set()
+    new_count = 0
+    for ev in events:
+        key = _event_seen_key(ev)
+        keys_now.add(key)
+        if key in state:
+            ev.first_seen = state[key]
+        elif first_run:
+            ev.first_seen = bootstrap_iso
+            state[key] = bootstrap_iso
+        else:
+            ev.first_seen = today_iso
+            state[key] = today_iso
+            new_count += 1
+
+    # Garbage collect: drop keys that haven't shown up for a while. Keeps the
+    # state file from growing indefinitely as past events fall off. 60-day
+    # window covers a typical re-list cadence.
+    cutoff_iso = (date.today() - timedelta(days=60)).isoformat()
+    pruned = {k: v for k, v in state.items() if k in keys_now or v >= cutoff_iso}
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(pruned, sort_keys=True, ensure_ascii=False, indent=0),
+                          encoding="utf-8")
+    log.info("seen-events: %d total, %d newly added (%s run)",
+             len(pruned), new_count, "first" if first_run else "incremental")
+    return pruned
 
 
 def main() -> int:
@@ -86,6 +158,10 @@ def main() -> int:
     # Mark featured events using highlights config
     featured = _compute_featured_set(all_events, highlights)
     log.info("flagged %d events as featured", len(featured))
+
+    # Stamp first_seen on every event from data/seen_events.json. Powers
+    # the "Neu im Programm" strip + inline NEU badges in the renderer.
+    _stamp_first_seen(all_events, SEEN_EVENTS_PATH)
 
     # Build venue_id → canonical display name map. Used by the renderer for
     # chip labels — without it, off-site events (e.g. TUP-organized events at
